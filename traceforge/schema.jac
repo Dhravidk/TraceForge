@@ -174,6 +174,18 @@ obj MemoryPatchProposal {
     has diff_text: str = "";
 }
 
+obj ComparisonVerdict {
+    has winner: str = "";
+    has raw_score: float = 0.0;
+    has structured_score: float = 0.0;
+    has evidence_validity_winner: str = "";
+    has pivot_quality_winner: str = "";
+    has specificity_winner: str = "";
+    has actionability_winner: str = "";
+    has hallucination_winner: str = "";
+    has rationale: str = "";
+}
+
 edge HasBatch {}
 edge HasRun { has order: int = 0; }
 edge HasStep { has order: int = 0; }

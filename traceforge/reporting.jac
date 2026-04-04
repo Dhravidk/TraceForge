@@ -3,9 +3,9 @@ import from traceforge.parser { truncate_text }
 import from traceforge.analysis {
     batch_overview_summary,
     cluster_view_summary,
-    compare_baseline_summary,
     run_view_summary
 }
+import from traceforge.eval { compare_run_harness_summary }
 import from traceforge.llm_ops { compile_memory_patch_summary }
 
 def export_report_summary(root_node: any, batch_id: str) -> dict[str, any] {
@@ -214,11 +214,13 @@ def export_report_summary(root_node: any, batch_id: str) -> dict[str, any] {
     ]);
 
     if has_highlight_run {
-        comparison = compare_baseline_summary(root_node, highlight_run["run_id"], batch_id);
+        comparison = compare_run_harness_summary(root_node, highlight_run["run_id"], batch_id);
         lines.append(f"### Run `{highlight_run['run_id']}`");
         lines.append("");
+        lines.append(f"- Comparison mode: {comparison['comparison_mode']}");
         lines.append("- Raw baseline diagnosis:");
         lines.append(f"  - {comparison['baseline']['diagnosis']}");
+        lines.append(f"  - Baseline mode: {comparison['baseline']['mode']}");
         lines.append(f"  - Specificity: {comparison['baseline']['specificity']}");
         lines.append(f"  - Estimated input size: {comparison['baseline']['pack_token_estimate']} tokens");
         if comparison["baseline"]["blind_spots"] {
@@ -228,6 +230,7 @@ def export_report_summary(root_node: any, batch_id: str) -> dict[str, any] {
             }
         }
         lines.append("- Structured diagnosis:");
+        lines.append(f"  - Structured mode: {comparison['structured']['mode']}");
         lines.append(f"  - Failure class: {comparison['structured']['failure_class']}");
         lines.append(f"  - Critical step: {comparison['structured']['critical_step_idx']}");
         lines.append(f"  - Specificity: {comparison['structured']['specificity']}");
@@ -245,6 +248,9 @@ def export_report_summary(root_node: any, batch_id: str) -> dict[str, any] {
                 lines.append(f"    - Step {step['idx']} [{step['phase']}]: {step['excerpt']}");
             }
         }
+        lines.append("- Verifier:");
+        lines.append(f"  - Winner: {comparison['verifier']['winner']}");
+        lines.append(f"  - Rationale: {comparison['verifier']['rationale']}");
     } else {
         lines.append("No runs were available for comparison.");
     }
@@ -256,7 +262,7 @@ def export_report_summary(root_node: any, batch_id: str) -> dict[str, any] {
         "- Open the batch overview first to show that the failures are grouped rather than shown as raw logs.",
         "- Jump into the leading cluster to show recurring signals, the medoid, and the generated AGENTS.md patch.",
         "- Open a representative run and point to the highlighted critical step window.",
-        "- Close on the baseline comparison to show why the structured evidence pack is more specific than raw compressed trajectory text.",
+        "- Close on the fair comparison to show the same-schema raw transcript arm versus TraceForge retrieval, then read the verifier verdict.",
     ]);
 
     export_dir = Path("exports");

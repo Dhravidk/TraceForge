@@ -8,6 +8,7 @@ include traceforge.critical;
 include traceforge.graph_build;
 include traceforge.analysis;
 include traceforge.llm_ops;
+include traceforge.eval;
 include traceforge.reporting;
 include traceforge.api;
 include traceforge.ui;

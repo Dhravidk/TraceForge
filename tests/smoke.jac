@@ -11,14 +11,15 @@ include traceforge.critical;
 include traceforge.graph_build;
 include traceforge.analysis;
 include traceforge.llm_ops;
+include traceforge.eval;
 include traceforge.reporting;
 include traceforge.api;
 
 test {
     status_result = root spawn GetStatus();
     status_data = status_result.reports[0];
-    assert status_data["phase"] == "phase_6_submission_packet_ready";
-    assert status_data["project"]["status"] == "submission_surface_ready";
+    assert status_data["phase"] == "phase_7_fair_comparison_ready";
+    assert status_data["project"]["status"] == "fair_comparison_ready";
 }
 
 test {
@@ -158,13 +159,33 @@ test {
     result = root spawn CompareBaseline(run_id="premature_completion");
     data = result.reports[0];
     assert data["status"] == "comparison_ready";
+    assert data["comparison_mode"] == "deterministic_proxy";
+    assert data["baseline"]["mode"] == "raw_transcript_prompt";
+    assert data["structured"]["mode"] == "traceforge_retrieval_prompt";
     assert data["structured"]["critical_step_idx"] == 1;
     assert data["structured"]["failure_class"] == "PREMATURE_COMPLETION";
-    assert data["baseline"]["specificity"] == "low";
+    assert data["baseline"]["specificity"] == "medium";
     assert data["structured"]["specificity"] == "high";
     assert data["delta"]["critical_step_localized"] == True;
-    assert len(data["baseline"]["blind_spots"]) >= 3;
+    assert len(data["baseline"]["blind_spots"]) >= 2;
     assert len(data["structured"]["support_points"]) >= 3;
+    assert data["verifier"]["status"] == "deterministic_proxy_verdict";
+    assert data["verifier"]["winner"] == "structured";
+    assert data["blinded"]["assignment"]["A"] != data["blinded"]["assignment"]["B"];
+}
+
+test {
+    result = root spawn ExportBlindedEvaluation(batch_id="sample-starter", limit=2);
+    data = result.reports[0];
+    assert data["status"] == "exported";
+    assert data["selected_run_count"] == 2;
+    assert "exports/evals/sample-starter_blind.md" in data["blind_sheet_path"];
+    assert "exports/evals/sample-starter_blind_key.json" in data["blind_key_path"];
+    assert "exports/evals/sample-starter_comparison.json" in data["summary_json_path"];
+    blind_sheet = Path(data["blind_sheet_path"]).read_text(encoding="utf-8");
+    assert "## Run `invalid_patch`" in blind_sheet or "## Run `premature_completion`" in blind_sheet;
+    assert "### Arm A" in blind_sheet;
+    assert "### Rubric" in blind_sheet;
 }
 
 test {

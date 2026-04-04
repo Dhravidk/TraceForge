@@ -28,7 +28,8 @@ This repo is now running a submission-ready Jac demo path for sample and local u
 - Jac smoke tests for the starter demo path
 - a readable demo UI organized around batch overview, cluster explorer, run forensics, and baseline comparison
 - live cluster diagnosis and batch-report export surfaced directly in the Jac UI
-- stronger baseline-vs-structured comparison with explicit blind spots, support points, and evidence-window grounding
+- fair same-schema raw-transcript-vs-TraceForge comparison with explicit blind spots, support points, verifier output, and evidence-window grounding
+- blinded evaluation export for side-by-side judging of raw transcript analysis versus TraceForge retrieval
 - markdown batch report export that doubles as a demo and Devpost backup artifact
 
 The remaining major work is deeper typed `by llm()` synthesis and any last-mile demo recording polish. The current repo already supports the full judge-facing path: batch overview, cluster explorer, run forensics, baseline comparison, cluster diagnosis, and markdown report export.
@@ -55,6 +56,7 @@ The remaining major work is deeper typed `by llm()` synthesis and any last-mile 
 │   ├── graph_build.jac
 │   ├── analysis.jac
 │   ├── llm_ops.jac
+│   ├── eval.jac
 │   ├── reporting.jac
 │   ├── api.jac
 │   └── ui.jac
@@ -82,8 +84,8 @@ This is important for JacHacks because meaningful Jac usage is part of the judgi
 3. Open one representative cluster and inspect recurring signals plus the generated `AGENTS.md` patch.
 4. Open one representative run and highlight the likely critical step.
 5. Show run diagnosis and cluster diagnosis.
-6. Compare raw-baseline analysis versus structured analysis.
-7. Export the markdown batch report as a demo fallback artifact.
+6. Compare a raw-transcript diagnosis versus TraceForge retrieval under the same output schema.
+7. Export the blinded evaluation sheet and markdown batch report as demo fallback artifacts.
 
 ## Local Run
 
@@ -111,6 +113,7 @@ jac enter main.jac GetRunView premature_completion
 jac enter main.jac GetClusterView sample-starter:premature_completion:0
 jac enter main.jac CompileMemoryPatch sample-starter:premature_completion:0
 jac enter main.jac CompareBaseline premature_completion
+jac enter main.jac ExportBlindedEvaluation sample-starter --limit 2
 jac enter main.jac ExportBatchReport sample-starter
 ```
 
@@ -144,5 +147,5 @@ Recommended judge path:
 2. Show the failure-family overview and top recurring artifacts.
 3. Open the first cluster and read one recurring signal plus the generated patch.
 4. Open the medoid run and point to the highlighted critical-step window.
-5. Compare the raw baseline against the structured diagnosis.
-6. Export the batch report and show the generated markdown path as the backup artifact.
+5. Compare the raw transcript arm against the TraceForge retrieval arm and read the verifier verdict.
+6. Export the blinded eval sheet and batch report and show the generated markdown paths as backup artifacts.
