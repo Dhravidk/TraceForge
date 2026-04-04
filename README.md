@@ -22,9 +22,9 @@ This repo is now past the initial scaffold and running a graph-backed Jac demo p
 - graph compilation into `Batch`, `Run`, `Step`, artifact, hypothesis, and cluster nodes
 - graph-backed batch, run, cluster, diagnosis, patch, comparison, and report walkers
 - Jac smoke tests for the starter demo path
-- a minimal client that loads live data from the starter batch
+- a readable demo UI that loads live data from the starter batch
 
-The remaining major work is deeper typed `by llm()` synthesis, stronger baseline comparison, and turning the current live-data shell into the final demo UI.
+The remaining major work is deeper typed `by llm()` synthesis, stronger baseline comparison, and polishing the current demo UI into the final JacHacks presentation surface.
 
 ## Repo Layout
 

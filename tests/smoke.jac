@@ -27,10 +27,26 @@ test {
 }
 
 test {
+    result = root spawn DiagnoseRun(run_id="premature_completion");
+    data = result.reports[0];
+    assert data["status"] == "deterministic_diagnosis";
+    assert data["failure_class"] == "PREMATURE_COMPLETION";
+    assert data["critical_step_idx"] == 1;
+}
+
+test {
     result = root spawn CompileMemoryPatch(cluster_id="sample-starter:premature_completion:0");
     data = result.reports[0];
     assert data["status"] == "deterministic_patch";
     assert "rerun at least one targeted failing test" in data["diff_text"];
+}
+
+test {
+    result = root spawn CompareBaseline(run_id="premature_completion");
+    data = result.reports[0];
+    assert data["status"] == "comparison_ready";
+    assert data["structured"]["critical_step_idx"] == 1;
+    assert data["structured"]["failure_class"] == "PREMATURE_COMPLETION";
 }
 
 test {
