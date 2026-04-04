@@ -1,4 +1,5 @@
 import from traceforge.analysis { cluster_view_summary, run_view_summary }
+import from traceforge.schema { ClusterLabel, FailureClass, MemoryPatchProposal }
 
 def choose_failure_class(text: str) -> FailureClass by llm();
 
@@ -133,7 +134,7 @@ def compile_memory_patch_summary(root_node: any, cluster_id: str) -> dict[str, a
         "--- AGENTS.md",
         "+++ AGENTS.md",
         "@@",
-        "+## " + cluster_view["label"],
+        "+## " + str(cluster_view["label"]),
     ];
     for rule in rules {
         diff_lines.append("+- " + rule);
@@ -145,7 +146,7 @@ def compile_memory_patch_summary(root_node: any, cluster_id: str) -> dict[str, a
         "summary": "Operational memory patch synthesized from the current cluster motif.",
         "rules": [
             {
-                "title": cluster_view["label"] + " rule " + str(index + 1),
+                "title": str(cluster_view["label"]) + " rule " + str(index + 1),
                 "rationale": _diagnosis_reason(str(cluster_view["failure_class"])),
                 "rule_text": rule,
                 "supported_by_steps": [],

@@ -2,6 +2,7 @@ sv import from traceforge.api {
     AnalyzeBatch,
     CompareBaseline,
     CompileMemoryPatch,
+    DiagnoseRun,
     GetBatchOverview,
     GetClusterView,
     GetRunView
@@ -11,11 +12,58 @@ cl {
     def:pub app() -> JsxElement {
         has status: str = "Booting TraceForge...";
         has loading: bool = True;
-        has overview: any = {};
-        has runDetail: any = {};
-        has clusterDetail: any = {};
-        has patchDetail: any = {};
-        has comparison: any = {};
+        has overview: any = {
+            "family_counts": {},
+            "clusters": [],
+            "top_files": [],
+            "top_errors": [],
+            "top_tests": [],
+            "runs": [],
+            "run_count": 0,
+            "cluster_count": 0,
+        };
+        has runDetail: any = {
+            "summary": "",
+            "primary_failure": "UNKNOWN",
+            "critical_step_idx": -1,
+            "critical_evidence_window": [],
+            "timeline": [],
+            "artifacts": {
+                "fingerprint": {},
+                "cluster_ids": [],
+            },
+        };
+        has clusterDetail: any = {
+            "label": "",
+            "summary": "",
+            "failure_class": "UNKNOWN",
+            "size": 0,
+            "recurring_signals": [],
+            "representative_runs": [],
+        };
+        has patchDetail: any = {
+            "summary": "",
+            "rules": [],
+            "diff_text": "",
+        };
+        has comparison: any = {
+            "baseline": {
+                "diagnosis": "",
+                "compressed_trajectory": "",
+                "specificity": "",
+            },
+            "structured": {
+                "failure_class": "UNKNOWN",
+                "critical_step_idx": -1,
+                "evidence_window": [],
+                "why_better": "",
+            },
+        };
+        has diagnosis: any = {
+            "irreversible_because": "",
+            "evidence": [],
+            "confidence": 0.0,
+        };
 
         async can with entry {
             analyze = root spawn AnalyzeBatch(batch_id="sample-starter");
@@ -28,11 +76,15 @@ cl {
                 overview = overview_result.reports[0];
             }
 
-            if overview["runs"] && overview["runs"].length > 0 {
+            if overview["runs"].length > 0 {
                 first_run_id = String(overview["runs"][0]["run_id"]);
                 run_result = root spawn GetRunView(run_id=first_run_id);
                 if run_result.reports {
                     runDetail = run_result.reports[0];
+                }
+                diagnosis_result = root spawn DiagnoseRun(run_id=first_run_id);
+                if diagnosis_result.reports {
+                    diagnosis = diagnosis_result.reports[0];
                 }
                 compare_result = root spawn CompareBaseline(run_id=first_run_id);
                 if compare_result.reports {
@@ -40,7 +92,7 @@ cl {
                 }
             }
 
-            if overview["clusters"] && overview["clusters"].length > 0 {
+            if overview["clusters"].length > 0 {
                 first_cluster_id = String(overview["clusters"][0]["cluster_id"]);
                 cluster_result = root spawn GetClusterView(cluster_id=first_cluster_id);
                 if cluster_result.reports {
@@ -55,6 +107,20 @@ cl {
             status = "Starter batch loaded through graph-backed walkers.";
             loading = False;
         }
+
+        familyRows = Object.entries(overview["family_counts"]);
+        topFiles = overview["top_files"];
+        topErrors = overview["top_errors"];
+        topTests = overview["top_tests"];
+        clusters = overview["clusters"];
+        runs = overview["runs"];
+        diagnosisEvidence = diagnosis["evidence"] || [];
+        criticalWindow = runDetail["critical_evidence_window"] || [];
+        timeline = runDetail["timeline"] || [];
+        representativeRuns = clusterDetail["representative_runs"] || [];
+        recurringSignals = clusterDetail["recurring_signals"] || [];
+        patchRules = patchDetail["rules"] || [];
+        structuredWindow = comparison["structured"]["evidence_window"] || [];
 
         if loading {
             return <main className="shell">
@@ -74,38 +140,160 @@ cl {
                 <p className="tagline">Batch failure compiler for coding-agent trajectories.</p>
                 <p className="status">{status}</p>
                 <p className="status">
-                    Runs: {String(overview["run_count"] || 0)} | Clusters: {String(overview["cluster_count"] || 0)}
+                    Batch size: {String(overview["run_count"])} | Cluster count: {String(overview["cluster_count"])}
                 </p>
             </section>
 
             <section className="panels">
                 <article className="panel">
-                    <h2>Batch Overview</h2>
-                    <pre>{JSON.stringify(overview, null, 2)}</pre>
+                    <h2>Failure Families</h2>
+                    <ul>
+                        {[<li>{String(item[0])}: {String(item[1])}</li> for item in familyRows]}
+                    </ul>
+                    <h3>Top Files</h3>
+                    <ul>
+                        {[<li>{String(item[0])} ({String(item[1])})</li> for item in topFiles]}
+                    </ul>
+                    <h3>Top Errors</h3>
+                    <ul>
+                        {[<li>{String(item[0])} ({String(item[1])})</li> for item in topErrors]}
+                    </ul>
+                    <h3>Top Tests</h3>
+                    <ul>
+                        {[<li>{String(item[0])} ({String(item[1])})</li> for item in topTests]}
+                    </ul>
                 </article>
 
                 <article className="panel">
+                    <h2>Clusters</h2>
+                    <ul>
+                        {[
+                            <li>
+                                <strong>{String(cluster["label"])}</strong> | {String(cluster["failure_class"])} | size {String(cluster["size"])}
+                                <div>{String(cluster["summary"])}</div>
+                            </li>
+                            for cluster in clusters
+                        ]}
+                    </ul>
+                    <h3>Runs</h3>
+                    <ul>
+                        {[
+                            <li>
+                                <strong>{String(run["run_id"])}</strong> | {String(run["primary_failure"])} | critical step {String(run["critical_step_idx"])}
+                                <div>{String(run["summary"])}</div>
+                            </li>
+                            for run in runs
+                        ]}
+                    </ul>
+                </article>
+            </section>
+
+            <section className="panels">
+                <article className="panel">
                     <h2>Representative Run</h2>
-                    <pre>{JSON.stringify(runDetail, null, 2)}</pre>
+                    <p><strong>{String(runDetail["run_id"] || "")}</strong></p>
+                    <p>{String(runDetail["summary"] || "")}</p>
+                    <p>Primary failure: {String(runDetail["primary_failure"] || "UNKNOWN")}</p>
+                    <p>Critical step: {String(runDetail["critical_step_idx"])}</p>
+                    <h3>Diagnosis</h3>
+                    <p>{String(diagnosis["irreversible_because"] || "")}</p>
+                    <p>Confidence: {String(diagnosis["confidence"] || 0)}</p>
+                    <ul>
+                        {[
+                            <li>
+                                Step {String(item["step_idx"])} [{String(item["artifact"])}]: {String(item["quote"])}
+                            </li>
+                            for item in diagnosisEvidence
+                        ]}
+                    </ul>
+                    <h3>Critical Window</h3>
+                    <ol>
+                        {[
+                            <li>
+                                <strong>Step {String(item["idx"])} [{String(item["phase"])}]</strong>
+                                <div>{String(item["excerpt"])}</div>
+                            </li>
+                            for item in criticalWindow
+                        ]}
+                    </ol>
+                </article>
+
+                <article className="panel">
+                    <h2>Run Timeline</h2>
+                    <ol>
+                        {[
+                            <li>
+                                <strong>Step {String(item["idx"])} [{String(item["phase"])}]</strong>
+                                <div>{String(item["excerpt"])}</div>
+                                <div>Files: {String((item["touched_files"] || []).join(", "))}</div>
+                            </li>
+                            for item in timeline
+                        ]}
+                    </ol>
                 </article>
             </section>
 
             <section className="panels">
                 <article className="panel">
                     <h2>Representative Cluster</h2>
-                    <pre>{JSON.stringify(clusterDetail, null, 2)}</pre>
+                    <p><strong>{String(clusterDetail["label"] || "")}</strong></p>
+                    <p>{String(clusterDetail["summary"] || "")}</p>
+                    <p>Failure class: {String(clusterDetail["failure_class"] || "UNKNOWN")}</p>
+                    <p>Cluster size: {String(clusterDetail["size"] || 0)}</p>
+                    <h3>Recurring Signals</h3>
+                    <ul>
+                        {[<li>{String(item)}</li> for item in recurringSignals]}
+                    </ul>
+                    <h3>Representative Runs</h3>
+                    <ul>
+                        {[
+                            <li>
+                                <strong>{String(item["run_id"])}</strong> | critical step {String(item["critical_step_idx"])}
+                                <div>{String(item["summary"])}</div>
+                            </li>
+                            for item in representativeRuns
+                        ]}
+                    </ul>
                 </article>
 
                 <article className="panel">
-                    <h2>Memory Patch</h2>
-                    <pre>{JSON.stringify(patchDetail, null, 2)}</pre>
+                    <h2>Generated AGENTS.md Patch</h2>
+                    <p>{String(patchDetail["summary"] || "")}</p>
+                    <ul>
+                        {[
+                            <li>
+                                <strong>{String(rule["title"])}</strong>: {String(rule["rule_text"])}
+                            </li>
+                            for rule in patchRules
+                        ]}
+                    </ul>
+                    <pre>{String(patchDetail["diff_text"] || "")}</pre>
                 </article>
             </section>
 
             <section className="panels">
                 <article className="panel">
                     <h2>Baseline Comparison</h2>
-                    <pre>{JSON.stringify(comparison, null, 2)}</pre>
+                    <h3>Raw Baseline</h3>
+                    <p>{String(comparison["baseline"]["diagnosis"] || "")}</p>
+                    <p>Specificity: {String(comparison["baseline"]["specificity"] || "")}</p>
+                    <pre>{String(comparison["baseline"]["compressed_trajectory"] || "")}</pre>
+                </article>
+
+                <article className="panel">
+                    <h2>Structured Diagnosis</h2>
+                    <p>Failure class: {String(comparison["structured"]["failure_class"] || "UNKNOWN")}</p>
+                    <p>Critical step: {String(comparison["structured"]["critical_step_idx"] || -1)}</p>
+                    <p>{String(comparison["structured"]["why_better"] || "")}</p>
+                    <ol>
+                        {[
+                            <li>
+                                <strong>Step {String(item["idx"])} [{String(item["phase"])}]</strong>
+                                <div>{String(item["excerpt"])}</div>
+                            </li>
+                            for item in structuredWindow
+                        ]}
+                    </ol>
                 </article>
             </section>
         </main>;
