@@ -250,6 +250,17 @@ def list_cluster_patches(cluster_node: Cluster) -> list[MemoryPatch] {
     );
 }
 
+def run_batch_id_value(run_node: Run, fallback: str = "") -> str {
+    metadata_batch_id = str(run_node.metadata.get("batch_id") or "");
+    if metadata_batch_id {
+        return metadata_batch_id;
+    }
+    if hasattr(run_node, "batch_id") and str(run_node.batch_id or "") {
+        return str(run_node.batch_id);
+    }
+    return fallback;
+}
+
 def find_batch_node(root_node: any, target_batch_id: str) -> any {
     batches = [root_node ->:HasBatch:->][?:Batch, batch_id == target_batch_id];
     if batches {
@@ -258,22 +269,53 @@ def find_batch_node(root_node: any, target_batch_id: str) -> any {
     return None;
 }
 
-def find_run_node(root_node: any, target_run_id: str) -> any {
-    for batch in [root_node ->:HasBatch:->][?:Batch] {
+def find_run_node(root_node: any, target_run_id: str, target_batch_id: str = "") -> any {
+    if target_batch_id {
+        batch = find_batch_node(root_node, target_batch_id);
+        if batch is None {
+            return None;
+        }
         runs = [batch ->:HasRun:->][?:Run, run_id == target_run_id];
         if runs {
             return runs[0];
         }
+        return None;
+    }
+
+    matches: list[Run] = [];
+    for batch in [root_node ->:HasBatch:->][?:Batch] {
+        runs = [batch ->:HasRun:->][?:Run, run_id == target_run_id];
+        if runs {
+            matches.extend(runs);
+        }
+    }
+    if len(matches) == 1 {
+        return matches[0];
     }
     return None;
 }
 
-def find_batch_for_run(root_node: any, target_run_id: str) -> any {
-    for batch in [root_node ->:HasBatch:->][?:Batch] {
+def find_batch_for_run(root_node: any, target_run_id: str, target_batch_id: str = "") -> any {
+    if target_batch_id {
+        batch = find_batch_node(root_node, target_batch_id);
+        if batch is None {
+            return None;
+        }
         runs = [batch ->:HasRun:->][?:Run, run_id == target_run_id];
         if runs {
             return batch;
         }
+        return None;
+    }
+    matches: list[Batch] = [];
+    for batch in [root_node ->:HasBatch:->][?:Batch] {
+        runs = [batch ->:HasRun:->][?:Run, run_id == target_run_id];
+        if runs {
+            matches.append(batch);
+        }
+    }
+    if len(matches) == 1 {
+        return matches[0];
     }
     return None;
 }
@@ -352,13 +394,14 @@ def _file_node(path: str, file_nodes: dict[str, any]) -> any {
 
 def _attach_failure_hypotheses(run_node: Run, fingerprint: dict[str, any]) -> None {
     scores = fingerprint["failure_class_scores"];
+    run_batch_id = run_batch_id_value(run_node);
     for label in scores {
         score = float(scores[label]);
         if score <= 0.0 {
             continue;
         }
         run_node +>: SupportsHypothesis(weight=score) :+> FailureHypothesis(
-            hyp_id=f"{run_node.run_id}:{label}",
+            hyp_id=f"{run_batch_id}:{run_node.run_id}:{label}",
             label=failure_class_to_enum(str(label)),
             score=score,
             rationale=f"Deterministic score for {label}",
@@ -370,7 +413,7 @@ def _run_detail_hydrated(run_node: Run) -> bool {
     return bool(run_node.metadata.get("traceforge_detail_hydrated"));
 }
 
-def _attach_step_artifacts(step_node: Step, file_nodes: dict[str, any], parsed_step: any, run_id: str) -> None {
+def _attach_step_artifacts(step_node: Step, file_nodes: dict[str, any], parsed_step: any, run_id: str, batch_id: str) -> None {
     linked_files: list[any] = [];
     for file_path in parsed_step.touched_files {
         file_node = _file_node(file_path, file_nodes);
@@ -382,7 +425,7 @@ def _attach_step_artifacts(step_node: Step, file_nodes: dict[str, any], parsed_s
         stats = patch_stats(parsed_step.patch_text);
         patch_file_path = parsed_step.touched_files[0] if parsed_step.touched_files else "";
         patch_node = Patch(
-            patch_id=f"{run_id}:patch:{parsed_step.index}",
+            patch_id=f"{batch_id}:{run_id}:patch:{parsed_step.index}",
             file_path=patch_file_path,
             adds=stats["adds"],
             dels=stats["dels"],
@@ -403,7 +446,7 @@ def _attach_step_artifacts(step_node: Step, file_nodes: dict[str, any], parsed_s
             }
         }
         step_node +>: RunsTest() :+> TestEvent(
-            test_id=f"{run_id}:test:{parsed_step.index}",
+            test_id=f"{batch_id}:{run_id}:test:{parsed_step.index}",
             command=truncate_text(parsed_step.test_text, 240),
             status=test_status_from_text(parsed_step.test_text),
             failing_tests=failing_tests,
@@ -413,7 +456,7 @@ def _attach_step_artifacts(step_node: Step, file_nodes: dict[str, any], parsed_s
 
     if parsed_step.error_text {
         step_node +>: RaisesError() :+> ErrorEvent(
-            error_id=f"{run_id}:error:{parsed_step.index}",
+            error_id=f"{batch_id}:{run_id}:error:{parsed_step.index}",
             error_type=error_type_from_text(parsed_step.error_text),
             message=truncate_text(parsed_step.error_text, 240),
             severity=Severity.ERROR,
@@ -424,11 +467,12 @@ def _attach_step_artifacts(step_node: Step, file_nodes: dict[str, any], parsed_s
 def _attach_run_steps(run_node: Run, parsed_run: ParsedRun, file_nodes: dict[str, any]) -> None {
     seen_hashes: set[str] = set();
     previous_step_node = None;
+    run_batch_id = run_batch_id_value(run_node);
     for parsed_step in parsed_run.steps {
         is_repeated = parsed_step.content_hash in seen_hashes;
         seen_hashes.add(parsed_step.content_hash);
         run_node +>: HasStep(order=parsed_step.index) :+> (step_node := Step(
-            step_id=f"{parsed_run.run_id}:step:{parsed_step.index}",
+            step_id=f"{run_batch_id}:{parsed_run.run_id}:step:{parsed_step.index}",
             idx=parsed_step.index,
             kind=step_kind_to_enum(parsed_step.kind),
             role=parsed_step.role,
@@ -442,7 +486,7 @@ def _attach_run_steps(run_node: Run, parsed_run: ParsedRun, file_nodes: dict[str
             previous_step_node +>: NextStep() :+> step_node;
         }
         previous_step_node = step_node;
-        _attach_step_artifacts(step_node, file_nodes, parsed_step, parsed_run.run_id);
+        _attach_step_artifacts(step_node, file_nodes, parsed_step, parsed_run.run_id, run_batch_id);
     }
 }
 
@@ -474,9 +518,11 @@ def _create_run_node(batch: Batch, parsed_run: ParsedRun, order: int) -> dict[st
     summary = build_run_digest(parsed_run, fingerprint);
     metadata = dict(parsed_run.metadata);
     metadata["traceforge_detail_hydrated"] = False;
+    metadata["batch_id"] = batch.batch_id;
 
     batch +>: HasRun(order=order) :+> (run_node := Run(
         run_id=parsed_run.run_id,
+        batch_id=batch.batch_id,
         instance_id=parsed_run.instance_id,
         task_title=parsed_run.task_title,
         raw_path=parsed_run.source_path,
@@ -500,6 +546,15 @@ def _create_run_node(batch: Batch, parsed_run: ParsedRun, order: int) -> dict[st
         "summary": summary,
         "critical": critical,
     };
+}
+
+def _batch_graph_is_current(batch: Batch) -> bool {
+    for run_node in list_batch_runs(batch) {
+        if run_batch_id_value(run_node) != batch.batch_id {
+            return False;
+        }
+    }
+    return True;
 }
 
 def _attach_clusters(batch: Batch, run_records: list[dict[str, any]], batch_id: str) -> None {
@@ -573,7 +628,74 @@ def _attach_clusters(batch: Batch, run_records: list[dict[str, any]], batch_id: 
     }
 }
 
-def ensure_batch_graph(root_node: any, target_batch_id: str) -> dict[str, any] {
+def invalidate_batch_graph(root_node: any, target_batch_id: str) -> dict[str, any] {
+    existing = find_batch_node(root_node, target_batch_id);
+    if existing is None {
+        return {
+            "batch_id": target_batch_id,
+            "deleted": False,
+            "status": "missing",
+        };
+    }
+
+    cluster_nodes = list_batch_clusters(existing);
+    run_nodes = list_batch_runs(existing);
+    for cluster_node in cluster_nodes {
+        if cluster_node.cluster_id in GENERATED_PATCH_REGISTRY {
+            GENERATED_PATCH_REGISTRY[cluster_node.cluster_id] = [];
+        }
+        for patch_node in list_cluster_patches(cluster_node) {
+            del patch_node;
+        }
+    }
+    for run_node in run_nodes {
+        for hypothesis in list_run_hypotheses(run_node) {
+            del hypothesis;
+        }
+        for step_node in list_run_steps(run_node) {
+            for patch_node in list_step_patches(step_node) {
+                del patch_node;
+            }
+            for test_node in list_step_tests(step_node) {
+                del test_node;
+            }
+            for error_node in list_step_errors(step_node) {
+                del error_node;
+            }
+            del step_node;
+        }
+        del run_node;
+    }
+    for cluster_node in cluster_nodes {
+        del cluster_node;
+    }
+    root_node del--> existing;
+    del existing;
+    commit();
+    return {
+        "batch_id": target_batch_id,
+        "deleted": True,
+        "status": "invalidated",
+    };
+}
+
+def ensure_batch_graph(root_node: any, target_batch_id: str, force_rebuild: bool = False) -> dict[str, any] {
+    existing = find_batch_node(root_node, target_batch_id);
+    if existing is not None and not force_rebuild {
+        if not _batch_graph_is_current(existing) {
+            invalidate_batch_graph(root_node, target_batch_id);
+        } else {
+            return {
+                "batch": existing,
+                "created": False,
+                "status": "existing_graph",
+            };
+        }
+    }
+    existing = find_batch_node(root_node, target_batch_id);
+    if existing is not None and force_rebuild {
+        invalidate_batch_graph(root_node, target_batch_id);
+    }
     existing = find_batch_node(root_node, target_batch_id);
     if existing is not None {
         return {
@@ -610,7 +732,7 @@ def ensure_batch_graph(root_node: any, target_batch_id: str) -> dict[str, any] {
     return {
         "batch": batch,
         "created": True,
-        "status": "compiled",
+        "status": "recompiled" if force_rebuild else "compiled",
     };
 }
 

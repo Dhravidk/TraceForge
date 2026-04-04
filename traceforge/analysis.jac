@@ -1,6 +1,6 @@
 import from traceforge.ingest {
     batch_files,
-    batch_id_for_run,
+    batch_ids_for_run,
     run_source_path
 }
 import from traceforge.schema { Batch, Cluster, Run, Step }
@@ -8,7 +8,6 @@ import from traceforge.features { summarize_counts }
 import from traceforge.graph_build {
     ensure_batch_graph,
     failure_class_name,
-    find_batch_for_run,
     find_batch_node,
     find_cluster_node,
     find_run_node,
@@ -25,6 +24,7 @@ import from traceforge.graph_build {
     list_step_tests,
     remembered_cluster_patch_ids,
     run_graph_stats,
+    run_batch_id_value,
     step_kind_name
 }
 
@@ -39,35 +39,24 @@ def _run_exists_in_batch(batch_id: str, run_id: str) -> bool {
 
 def _ensure_graph_for_run(root_node: any, run_id: str, batch_id: str = "") -> any {
     if batch_id {
-        batch_node = find_batch_node(root_node, batch_id);
-        if batch_node is not None {
-            for scoped_run in list_batch_runs(batch_node) {
-                if scoped_run.run_id == run_id {
-                    return scoped_run;
-                }
-            }
+        run_node = find_run_node(root_node, run_id, batch_id);
+        if run_node is not None {
+            return run_node;
         }
         if _run_exists_in_batch(batch_id, run_id) {
             ensure_batch_graph(root_node, batch_id);
-            batch_node = find_batch_node(root_node, batch_id);
-            if batch_node is not None {
-                for scoped_run in list_batch_runs(batch_node) {
-                    if scoped_run.run_id == run_id {
-                        return scoped_run;
-                    }
-                }
-            }
+            return find_run_node(root_node, run_id, batch_id);
         }
+        return None;
     }
 
-    run_node = find_run_node(root_node, run_id);
-    if run_node is not None {
-        return run_node;
-    }
-    batch_id = batch_id_for_run(run_id);
-    if batch_id and run_source_path(run_id) {
-        ensure_batch_graph(root_node, batch_id);
-        return find_run_node(root_node, run_id);
+    matching_batch_ids = batch_ids_for_run(run_id);
+    if len(matching_batch_ids) == 1 {
+        chosen_batch_id = matching_batch_ids[0];
+        if run_source_path(run_id, chosen_batch_id) {
+            ensure_batch_graph(root_node, chosen_batch_id);
+            return find_run_node(root_node, run_id, chosen_batch_id);
+        }
     }
     return None;
 }
@@ -125,6 +114,7 @@ def _run_summary_from_node(run_node: Run) -> dict[str, any] {
     primary_failure = failure_class_name(run_node.primary_failure);
     return {
         "run_id": run_node.run_id,
+        "batch_id": run_batch_id_value(run_node),
         "task_title": run_node.task_title,
         "source_path": run_node.raw_path,
         "summary": run_node.summary,
@@ -169,6 +159,7 @@ def _cluster_summary_from_node(batch: Batch, cluster_node: Cluster) -> dict[str,
         recurring_tests_raw.extend(run_node.fingerprint.get("top_test_names", []));
         run_card = {
             "run_id": run_node.run_id,
+            "batch_id": run_batch_id_value(run_node, batch.batch_id),
             "task_title": run_node.task_title,
             "summary": run_node.summary,
             "critical_step_idx": run_node.critical_step_idx,
@@ -199,6 +190,7 @@ def _cluster_summary_from_node(batch: Batch, cluster_node: Cluster) -> dict[str,
 
     return {
         "cluster_id": cluster_node.cluster_id,
+        "batch_id": batch.batch_id,
         "label": cluster_node.label,
         "failure_class": failure_label,
         "size": cluster_node.size,
@@ -248,6 +240,7 @@ def batch_overview_summary(root_node: any, batch_id: str) -> dict[str, any] {
         run_summaries.append(
             {
                 "run_id": run_node.run_id,
+                "batch_id": run_batch_id_value(run_node, batch.batch_id),
                 "task_title": run_node.task_title,
                 "step_count": run_node.step_count,
                 "primary_failure": failure_label,
@@ -288,8 +281,8 @@ def batch_overview_summary(root_node: any, batch_id: str) -> dict[str, any] {
     };
 }
 
-def analyze_batch_summary(root_node: any, batch_id: str) -> dict[str, any] {
-    compiled = ensure_batch_graph(root_node, batch_id);
+def analyze_batch_summary(root_node: any, batch_id: str, force_rebuild: bool = False) -> dict[str, any] {
+    compiled = ensure_batch_graph(root_node, batch_id, force_rebuild);
     batch = compiled["batch"];
     if batch is None {
         return {
@@ -301,7 +294,11 @@ def analyze_batch_summary(root_node: any, batch_id: str) -> dict[str, any] {
     overview = batch_overview_summary(root_node, batch_id);
     return {
         "batch_id": batch_id,
-        "status": "graph_compiled" if compiled["created"] else "graph_reused",
+        "status": (
+            "graph_rebuilt"
+            if compiled["status"] == "recompiled"
+            else ("graph_compiled" if compiled["created"] else "graph_reused")
+        ),
         "message": "Batch graph is ready for analysis and UI reads.",
         "run_count": overview["run_count"],
         "family_counts": overview["family_counts"],
@@ -354,158 +351,4 @@ def run_view_summary(root_node: any, run_id: str, batch_id: str = "") -> dict[st
         };
     }
     return _run_summary_from_node(run_node);
-}
-
-def _baseline_summary_for_failure(failure_class: str) -> str {
-    if failure_class == "INVALID_PATCH" {
-        return "The run appears to have introduced a bad patch and then failed a targeted test before still submitting.";
-    }
-    if failure_class == "OSCILLATION_LOOP" {
-        return "The run appears to repeat search or file-inspection behavior without making progress before submitting.";
-    }
-    if failure_class == "PREMATURE_COMPLETION" {
-        return "The run appears to submit too early after seeing an earlier failure and without a final validation pass.";
-    }
-    if failure_class == "WRONG_FILE_FOCUS" {
-        return "The run appears to spend effort on secondary files without reducing the original failure signal.";
-    }
-    if failure_class == "TOOL_MISUSE" {
-        return "The run appears to keep using tools in a failing way and never recovers the workflow.";
-    }
-    if failure_class == "STALE_CONTEXT_OR_BAD_PLAN" {
-        return "The run appears to remain in inspection or planning mode too long without committing to a validating change.";
-    }
-    if failure_class == "REQUIREMENT_DRIFT" {
-        return "The run appears to drift away from the main issue target before submitting.";
-    }
-    return "The run failed after a short edit cycle and ended in submission without reliable recovery evidence.";
-}
-
-def _pack_token_estimate(text: str) -> int {
-    if not text {
-        return 0;
-    }
-    return max(len(text) // 4, 1);
-}
-
-def _limited_join(items: list[any], limit: int = 3) -> str {
-    chosen: list[str] = [];
-    count = 0;
-    for item in items {
-        if count >= limit {
-            break;
-        }
-        chosen.append(str(item));
-        count += 1;
-    }
-    return ", ".join(chosen);
-}
-
-def _baseline_blind_spots(run_view: dict[str, any]) -> list[str] {
-    blind_spots = [
-        "No explicit critical-step candidate is surfaced from the raw compressed trajectory.",
-        "No cluster context is included, so repeated failure motifs across runs stay hidden.",
-        "No artifact summary is provided, so recurring files, tests, and error keywords are easy to miss.",
-    ];
-    if run_view["critical_step_idx"] < 0 {
-        blind_spots.append("The run has no localized pivot step, so the baseline cannot point to an irreversible mistake.");
-    }
-    return blind_spots;
-}
-
-def _structured_support_points(run_view: dict[str, any]) -> list[str] {
-    points: list[str] = [];
-    fingerprint = run_view["artifacts"]["fingerprint"];
-    cluster_ids = run_view["artifacts"]["cluster_ids"];
-    hypotheses = run_view["artifacts"]["failure_hypotheses"];
-
-    points.append("Critical step localized at step " + str(run_view["critical_step_idx"]) + ".");
-    if fingerprint.get("top_files", []) {
-        points.append("Top files: " + _limited_join(fingerprint.get("top_files", []), 3) + ".");
-    }
-    if fingerprint.get("top_error_keywords", []) {
-        points.append("Error keywords: " + _limited_join(fingerprint.get("top_error_keywords", []), 3) + ".");
-    }
-    if len(cluster_ids) > 0 {
-        points.append("Cluster context: " + _limited_join(cluster_ids, 2) + ".");
-    }
-    if len(hypotheses) > 0 {
-        top_hypothesis = hypotheses[0];
-        points.append(
-            "Top deterministic hypothesis: "
-            + str(top_hypothesis["label"])
-            + " @ "
-            + str(top_hypothesis["score"])
-            + "."
-        );
-    }
-    if len(run_view["critical_evidence_window"]) > 0 {
-        points.append("Evidence window includes " + str(len(run_view["critical_evidence_window"])) + " nearby steps around the pivot.");
-    }
-    return points;
-}
-
-def compare_baseline_summary(root_node: any, run_id: str, batch_id: str = "") -> dict[str, any] {
-    run_view = run_view_summary(root_node, run_id, batch_id);
-    if run_view["status"] == "stub" {
-        return {
-            "run_id": run_id,
-            "baseline": "Pending implementation",
-            "structured": "Pending implementation",
-            "status": "missing",
-        };
-    }
-    raw_steps: list[str] = [];
-    for item in run_view["timeline"] {
-        raw_steps.append(
-            "Step "
-            + str(item["idx"])
-            + " ["
-            + item["phase"]
-            + "]: "
-            + item["excerpt"]
-        );
-    }
-    raw_pack = "\n".join(raw_steps);
-    baseline_pack = raw_pack[:1200];
-    structured_pack = {
-        "summary": run_view["summary"],
-        "critical_step_idx": run_view["critical_step_idx"],
-        "failure_hypotheses": run_view["artifacts"]["failure_hypotheses"],
-        "cluster_ids": run_view["artifacts"]["cluster_ids"],
-        "top_files": run_view["artifacts"]["fingerprint"].get("top_files", []),
-        "top_errors": run_view["artifacts"]["fingerprint"].get("top_error_keywords", []),
-        "critical_window": run_view["critical_evidence_window"],
-    };
-    structured_support = _structured_support_points(run_view);
-
-    structured = {
-        "failure_class": run_view["primary_failure"],
-        "critical_step_idx": run_view["critical_step_idx"],
-        "evidence_window": run_view["critical_evidence_window"],
-        "support_points": structured_support,
-        "specificity": "high",
-        "pack_token_estimate": _pack_token_estimate(str(structured_pack)),
-        "why_better": "Structured analysis identifies a concrete pivot step, adds artifact and cluster context, and cites graph-backed evidence windows.",
-    };
-    return {
-        "run_id": run_id,
-        "baseline": {
-            "mode": "raw_compressed",
-            "compressed_trajectory": baseline_pack,
-            "diagnosis": _baseline_summary_for_failure(run_view["primary_failure"]),
-            "specificity": "low",
-            "blind_spots": _baseline_blind_spots(run_view),
-            "pack_token_estimate": _pack_token_estimate(baseline_pack),
-        },
-        "structured": structured,
-        "delta": {
-            "critical_step_localized": run_view["critical_step_idx"] >= 0,
-            "cluster_context_added": len(run_view["artifacts"]["cluster_ids"]) > 0,
-            "artifact_context_added": len(run_view["artifacts"]["fingerprint"].get("top_files", [])) > 0,
-            "baseline_pack_token_estimate": _pack_token_estimate(baseline_pack),
-            "structured_pack_token_estimate": _pack_token_estimate(str(structured_pack)),
-        },
-        "status": "comparison_ready",
-    };
 }

@@ -86,6 +86,142 @@ def cluster_rule_lines(failure_class: str) -> list[str] {
     ];
 }
 
+def _join_tokens(items: list[any], limit: int = 3) -> str {
+    chosen: list[str] = [];
+    for item in items {
+        if len(chosen) >= limit {
+            break;
+        }
+        chosen.append(str(item));
+    }
+    return ", ".join(chosen);
+}
+
+def _critical_quote(run_view: dict[str, any]) -> str {
+    for step in run_view["critical_evidence_window"] {
+        if int(step["idx"]) == int(run_view["critical_step_idx"]) {
+            return str(step["excerpt"]);
+        }
+    }
+    if len(run_view["critical_evidence_window"]) > 0 {
+        return str(run_view["critical_evidence_window"][0]["excerpt"]);
+    }
+    return str(run_view["summary"]);
+}
+
+def _cluster_support_records(root_node: any, cluster_view: dict[str, any]) -> list[dict[str, any]] {
+    batch_id = str(cluster_view.get("batch_id") or str(cluster_view["cluster_id"]).split(":")[0]);
+    support_records: list[dict[str, any]] = [];
+    for run_item in cluster_view["representative_runs"] {
+        if len(support_records) >= 3 {
+            break;
+        }
+        run_view = run_view_summary(root_node, str(run_item["run_id"]), batch_id);
+        if run_view["status"] == "stub" {
+            continue;
+        }
+        support_records.append(
+            {
+                "run_id": run_view["run_id"],
+                "batch_id": run_view["batch_id"],
+                "critical_step_idx": run_view["critical_step_idx"],
+                "quote": _critical_quote(run_view),
+                "top_files": run_view["artifacts"]["fingerprint"].get("top_files", []),
+                "top_tests": run_view["artifacts"]["fingerprint"].get("top_test_names", []),
+                "top_errors": run_view["artifacts"]["fingerprint"].get("top_error_keywords", []),
+            }
+        );
+    }
+    return support_records;
+}
+
+def _supported_steps(records: list[dict[str, any]]) -> list[int] {
+    steps: list[int] = [];
+    for record in records {
+        step_idx = int(record["critical_step_idx"]);
+        if step_idx >= 0 and step_idx not in steps {
+            steps.append(step_idx);
+        }
+    }
+    return steps;
+}
+
+def _evidence_lines(cluster_view: dict[str, any], support_records: list[dict[str, any]]) -> list[str] {
+    lines: list[str] = [];
+    for record in support_records {
+        lines.append(
+            str(record["run_id"])
+            + "@"
+            + str(record["critical_step_idx"])
+            + ": "
+            + str(record["quote"])
+        );
+    }
+    if cluster_view["recurring_tests"] {
+        lines.append(
+            "Recurring tests: "
+            + _join_tokens([item[0] for item in cluster_view["recurring_tests"]], 3)
+        );
+    }
+    if cluster_view["recurring_errors"] {
+        lines.append(
+            "Recurring errors: "
+            + _join_tokens([item[0] for item in cluster_view["recurring_errors"]], 3)
+        );
+    }
+    if cluster_view["recurring_files"] {
+        lines.append(
+            "Recurring files: "
+            + _join_tokens([item[0] for item in cluster_view["recurring_files"]], 3)
+        );
+    }
+    return lines;
+}
+
+def _evidence_grounded_rule_records(cluster_view: dict[str, any], support_records: list[dict[str, any]]) -> list[dict[str, any]] {
+    failure_class = str(cluster_view["failure_class"]);
+    base_rules = cluster_rule_lines(failure_class);
+    recurring_tests = [item[0] for item in cluster_view["recurring_tests"]];
+    recurring_errors = [item[0] for item in cluster_view["recurring_errors"]];
+    recurring_files = [item[0] for item in cluster_view["recurring_files"]];
+    step_refs = _supported_steps(support_records);
+    evidence_anchor = _join_tokens(
+        [
+            str(record["run_id"]) + "@" + str(record["critical_step_idx"])
+            for record in support_records
+        ],
+        3,
+    );
+    evidence_quote = _join_tokens([str(record["quote"]) for record in support_records], 2);
+    records: list[dict[str, any]] = [];
+
+    for (index, rule_text) in enumerate(base_rules) {
+        refined_rule = rule_text;
+        if failure_class == "PREMATURE_COMPLETION" and recurring_tests {
+            refined_rule = "Before submitting after failures in " + _join_tokens(recurring_tests, 2) + ", rerun at least one targeted failing test.";
+        } elif failure_class == "INVALID_PATCH" and recurring_errors {
+            refined_rule = "Do not keep a patch live when errors like " + _join_tokens(recurring_errors, 2) + " still appear after the edit.";
+        } elif failure_class == "WRONG_FILE_FOCUS" and recurring_files {
+            refined_rule = "Prioritize files like " + _join_tokens(recurring_files, 2) + " before editing secondary files.";
+        } elif failure_class == "OSCILLATION_LOOP" and recurring_files {
+            refined_rule = "If the run revisits " + _join_tokens(recurring_files, 2) + " without reducing failures, stop and re-rank targets.";
+        } elif failure_class == "TOOL_MISUSE" and recurring_errors {
+            refined_rule = "Treat repeated tool failures such as " + _join_tokens(recurring_errors, 2) + " as a strategy reset signal, not a reason to repeat the same command.";
+        }
+
+        records.append(
+            {
+                "title": str(cluster_view["label"]) + " rule " + str(index + 1),
+                "rationale": "Supported by " + evidence_anchor + ". Evidence: " + evidence_quote,
+                "rule_text": refined_rule,
+                "supported_by_steps": step_refs,
+                "confidence": 0.66 if len(step_refs) >= 2 else 0.6,
+            }
+        );
+    }
+    return records;
+}
+
 def _run_evidence_pack(run_view: dict[str, any]) -> str {
     lines: list[str] = [];
     lines.append("TraceForge run evidence pack");
@@ -172,37 +308,39 @@ def _deterministic_cluster_label(cluster_view: dict[str, any]) -> dict[str, any]
     };
 }
 
-def _deterministic_patch(cluster_view: dict[str, any]) -> dict[str, any] {
-    rules = cluster_rule_lines(str(cluster_view["failure_class"]));
+def _deterministic_patch(root_node: any, cluster_view: dict[str, any]) -> dict[str, any] {
+    support_records = _cluster_support_records(root_node, cluster_view);
+    rules = _evidence_grounded_rule_records(cluster_view, support_records);
+    evidence_lines = _evidence_lines(cluster_view, support_records);
     diff_lines = [
         "--- AGENTS.md",
         "+++ AGENTS.md",
         "@@",
         "+## " + str(cluster_view["label"]),
+        "+### Evidence Anchors",
     ];
+    if evidence_lines {
+        for line in evidence_lines {
+            diff_lines.append("+- " + line);
+        }
+    } else {
+        diff_lines.append("+- No representative evidence was available; using recurring cluster signals only.");
+    }
+    diff_lines.append("+### Rules");
     for rule in rules {
-        diff_lines.append("+- " + rule);
+        diff_lines.append("+- " + str(rule["rule_text"]));
     }
     return {
         "cluster_id": cluster_view["cluster_id"],
         "scope": "cluster",
         "cluster_label": cluster_view["label"],
-        "summary": "Operational memory patch synthesized from the current cluster motif.",
-        "rules": [
-            {
-                "title": str(cluster_view["label"]) + " rule " + str(index + 1),
-                "rationale": diagnosis_reason(str(cluster_view["failure_class"])),
-                "rule_text": rule,
-                "supported_by_steps": [],
-                "confidence": 0.64,
-            }
-            for (index, rule) in enumerate(rules)
-        ],
+        "summary": "Operational memory patch synthesized from representative runs, critical-step evidence, and recurring cluster signals.",
+        "rules": rules,
         "diff_text": "\n".join(diff_lines),
-        "confidence": 0.64,
+        "confidence": 0.66 if len(rules) > 0 else 0.5,
         "status": "deterministic_patch",
         "llm_used": False,
-        "evidence_pack": _cluster_evidence_pack(cluster_view),
+        "evidence_pack": _cluster_evidence_pack(cluster_view) + "\nEvidence anchors:\n" + "\n".join(evidence_lines),
     };
 }
 
@@ -310,7 +448,7 @@ def compile_memory_patch_summary(root_node: any, cluster_id: str) -> dict[str, a
         };
     }
 
-    fallback = _deterministic_patch(cluster_view);
+    fallback = _deterministic_patch(root_node, cluster_view);
     if not llm_enabled() {
         return _store_patch_response(root_node, cluster_id, fallback);
     }

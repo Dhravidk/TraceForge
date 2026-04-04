@@ -344,23 +344,36 @@ def all_known_batch_ids() -> list[str] {
     return sample_batches + available_upload_batch_ids();
 }
 
-def batch_id_for_run(run_id: str) -> str {
+def batch_ids_for_run(run_id: str) -> list[str] {
+    batch_ids: list[str] = [];
     for batch_id in all_known_batch_ids() {
         for path in batch_files(batch_id) {
             if sample_file_run_id(path) == run_id {
-                return batch_id;
+                batch_ids.append(batch_id);
+                break;
             }
         }
+    }
+    return batch_ids;
+}
+
+def batch_id_for_run(run_id: str) -> str {
+    matches = batch_ids_for_run(run_id);
+    if len(matches) == 1 {
+        return matches[0];
     }
     return "";
 }
 
-def run_source_path(run_id: str) -> str {
-    batch_id = batch_id_for_run(run_id);
-    if not batch_id {
+def run_source_path(run_id: str, batch_id: str = "") -> str {
+    chosen_batch_id = batch_id;
+    if not chosen_batch_id {
+        chosen_batch_id = batch_id_for_run(run_id);
+    }
+    if not chosen_batch_id {
         return "";
     }
-    for path in batch_files(batch_id) {
+    for path in batch_files(chosen_batch_id) {
         if sample_file_run_id(path) == run_id {
             return path;
         }

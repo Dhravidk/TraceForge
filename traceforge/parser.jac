@@ -19,9 +19,11 @@ obj ParsedStep {
     has assistant_content: str = "";
     has trailing_turns: list[RawTurn] = [];
     has touched_files: list[str] = [];
+    has command_text: str = "";
     has patch_text: str = "";
     has test_text: str = "";
     has error_text: str = "";
+    has submit_text: str = "";
 }
 
 obj ParsedRun {
@@ -137,47 +139,189 @@ def hash_text(text: str) -> str {
     return hashlib.sha256(text.encode("utf-8")).hexdigest();
 }
 
+def _contains_any(lower: str, tokens: list[str]) -> bool {
+    for token in tokens {
+        if token in lower {
+            return True;
+        }
+    }
+    return False;
+}
+
+def _nonempty_lines(text: str) -> list[str] {
+    lines: list[str] = [];
+    for raw_line in text.split("\n") {
+        line = raw_line.strip();
+        if line {
+            lines.append(line);
+        }
+    }
+    return lines;
+}
+
+def _looks_like_shell_command(text: str) -> bool {
+    lower = text.lower().strip();
+    if not lower {
+        return False;
+    }
+    prefixes = [
+        "$ ",
+        "python ",
+        "pytest ",
+        "py.test ",
+        "bash ",
+        "sh ",
+        "git ",
+        "ls ",
+        "find ",
+        "grep ",
+        "rg ",
+        "sed ",
+        "cat ",
+        "head ",
+        "tail ",
+        "apply_patch",
+    ];
+    if _contains_any(lower, ["returncode", "exit code", "non-zero exit", "command failed"]) {
+        return True;
+    }
+    for line in _nonempty_lines(text) {
+        lower_line = line.lower();
+        for prefix in prefixes {
+            if lower_line.startswith(prefix) {
+                return True;
+            }
+        }
+    }
+    return False;
+}
+
+def _looks_like_patch_payload(text: str) -> bool {
+    lower = text.lower();
+    if _contains_any(lower, ["apply_patch", "diff --git", "*** begin patch", "@@ ", "--- ", "+++ "]) {
+        return True;
+    }
+    plus_lines = 0;
+    minus_lines = 0;
+    for line in text.split("\n") {
+        if line.startswith("+++") or line.startswith("---") {
+            continue;
+        }
+        if line.startswith("+") {
+            plus_lines += 1;
+        } elif line.startswith("-") {
+            minus_lines += 1;
+        }
+    }
+    return plus_lines + minus_lines >= 3;
+}
+
+def _looks_like_test_signal(text: str) -> bool {
+    lower = text.lower();
+    return _contains_any(
+        lower,
+        [
+            "pytest",
+            "py.test",
+            "test session starts",
+            "collected ",
+            "::",
+            " passed",
+            " failed",
+            "assert ",
+            "failing tests",
+        ],
+    );
+}
+
+def _looks_like_error_signal(text: str) -> bool {
+    lower = text.lower();
+    return _contains_any(
+        lower,
+        [
+            "traceback",
+            "exception",
+            "syntaxerror",
+            "importerror",
+            "module not found",
+            "assertionerror",
+            "error:",
+            " error ",
+            "failed",
+        ],
+    );
+}
+
+def _looks_like_submit_signal(text: str) -> bool {
+    lower = text.lower();
+    return _contains_any(
+        lower,
+        [
+            "submit",
+            "final answer",
+            "final response",
+            "ready to submit",
+            "i will submit",
+            "i'll submit",
+            "submitting now",
+        ],
+    );
+}
+
+def _looks_like_inspect_signal(text: str) -> bool {
+    lower = text.lower();
+    return _contains_any(lower, ["grep ", "ls ", "find ", "read ", "inspect", "open ", "cat ", "sed ", "rg "]);
+}
+
 def infer_kind(role: str, text: str) -> str {
     lower = text.lower();
-    if role in {"assistant", "agent"} {
-        return "ASSISTANT";
-    }
-    if "traceback" in lower or "error" in lower or "exception" in lower or "failed" in lower {
-        return "ERROR";
-    }
-    if "pytest" in lower or "test" in lower {
-        return "TEST";
-    }
-    if "patch" in lower or "diff" in lower or "apply_patch" in lower {
-        return "EDIT";
-    }
-    if "submit" in lower or "final" in lower {
+    if _looks_like_submit_signal(text) {
         return "SUBMIT";
     }
-    if role in {"tool", "command", "system"} {
+    if _looks_like_patch_payload(text) {
+        return "EDIT";
+    }
+    if _looks_like_test_signal(text) {
+        return "TEST";
+    }
+    if _looks_like_error_signal(text) {
+        return "ERROR";
+    }
+    if _looks_like_shell_command(text) {
+        return "COMMAND";
+    }
+    if role in {"tool", "command"} {
+        return "TOOL";
+    }
+    if role == "system" {
         return role.upper();
+    }
+    if role in {"assistant", "agent"} {
+        return "ASSISTANT";
     }
     return "OTHER";
 }
 
 def infer_phase(text: str) -> str {
-    lower = text.lower();
-    if any(token in lower for token in ["grep", "ls", "find", "read", "inspect"]) {
-        return "inspect";
-    }
-    if any(token in lower for token in ["patch", "diff", "apply_patch", "write"]) {
-        return "edit";
-    }
-    if any(token in lower for token in ["pytest", "unittest", "test"]) {
-        return "test";
-    }
-    if any(token in lower for token in ["submit", "final", "done"]) {
+    if _looks_like_submit_signal(text) {
         return "submit";
     }
-    if any(token in lower for token in ["traceback", "error", "exception", "failed"]) {
+    if _looks_like_patch_payload(text) {
+        return "edit";
+    }
+    if _looks_like_test_signal(text) {
+        return "test";
+    }
+    if _looks_like_error_signal(text) {
         return "error";
     }
-    return "other";
+    if _looks_like_inspect_signal(text) {
+        return "inspect";
+    }
+    if _looks_like_shell_command(text) {
+        return "command";
+    }
+    return "reason";
 }
 
 def extract_file_tokens(text: str) -> list[str] {
@@ -218,9 +362,82 @@ def step_text(step: ParsedStep) -> str {
     return "\n".join(parts);
 }
 
+def step_has_command(step: ParsedStep) -> bool {
+    return bool(step.command_text);
+}
+
+def step_has_patch(step: ParsedStep) -> bool {
+    return bool(step.patch_text);
+}
+
+def step_has_test(step: ParsedStep) -> bool {
+    return bool(step.test_text);
+}
+
+def step_has_error(step: ParsedStep) -> bool {
+    return bool(step.error_text);
+}
+
+def step_has_submit(step: ParsedStep) -> bool {
+    return bool(step.submit_text);
+}
+
+def _matching_payloads(step: ParsedStep, predicate: any, include_assistant: bool = True) -> list[str] {
+    matches: list[str] = [];
+    if include_assistant and step.assistant_content and predicate(step.assistant_content) {
+        matches.append(step.assistant_content);
+    }
+    for turn in step.trailing_turns {
+        if turn.content and predicate(turn.content) {
+            matches.append(turn.content);
+        }
+    }
+    return matches;
+}
+
+def _final_kind_from_step(step: ParsedStep, full_text: str) -> str {
+    if step_has_submit(step) {
+        return "SUBMIT";
+    }
+    if step_has_patch(step) {
+        return "EDIT";
+    }
+    if step_has_test(step) {
+        return "TEST";
+    }
+    if step_has_error(step) {
+        return "ERROR";
+    }
+    if step_has_command(step) {
+        return "COMMAND";
+    }
+    return infer_kind(step.role, full_text);
+}
+
+def _final_phase_from_step(step: ParsedStep, full_text: str) -> str {
+    if step_has_submit(step) {
+        return "submit";
+    }
+    if step_has_patch(step) {
+        return "edit";
+    }
+    if step_has_test(step) {
+        return "test";
+    }
+    if step_has_error(step) {
+        return "error";
+    }
+    if step_has_command(step) and _looks_like_inspect_signal(step.command_text) {
+        return "inspect";
+    }
+    if step_has_command(step) {
+        return "command";
+    }
+    return infer_phase(full_text);
+}
+
 def finalize_step(step: ParsedStep) -> ParsedStep {
     text = step_text(step);
-    lower = text.lower();
     if not step.content_hash {
         step.content_hash = hash_text(text);
     }
@@ -228,15 +445,28 @@ def finalize_step(step: ParsedStep) -> ParsedStep {
         step.excerpt = truncate_text(text);
     }
     step.touched_files = extract_file_tokens(text);
-    if "patch" in lower or "diff" in lower or "apply_patch" in lower {
-        step.patch_text = truncate_text(text, 600);
+    command_matches = _matching_payloads(step, _looks_like_shell_command, True);
+    patch_matches = _matching_payloads(step, _looks_like_patch_payload, True);
+    test_matches = _matching_payloads(step, _looks_like_test_signal, True);
+    error_matches = _matching_payloads(step, _looks_like_error_signal, True);
+    submit_matches = _matching_payloads(step, _looks_like_submit_signal, True);
+    if command_matches {
+        step.command_text = truncate_text("\n".join(command_matches), 600);
     }
-    if "pytest" in lower or "test" in lower {
-        step.test_text = truncate_text(text, 600);
+    if patch_matches {
+        step.patch_text = truncate_text("\n".join(patch_matches), 600);
     }
-    if "traceback" in lower or "error" in lower or "exception" in lower or "failed" in lower {
-        step.error_text = truncate_text(text, 600);
+    if test_matches {
+        step.test_text = truncate_text("\n".join(test_matches), 600);
     }
+    if error_matches {
+        step.error_text = truncate_text("\n".join(error_matches), 600);
+    }
+    if submit_matches {
+        step.submit_text = truncate_text("\n".join(submit_matches), 280);
+    }
+    step.kind = _final_kind_from_step(step, text);
+    step.phase = _final_phase_from_step(step, text);
     return step;
 }
 
@@ -252,8 +482,6 @@ def segment_steps(turns: list[RawTurn]) -> list[ParsedStep] {
             }
             current = ParsedStep(index=len(steps));
             current.role = turn.role;
-            current.kind = infer_kind(turn.role, turn.content);
-            current.phase = infer_phase(turn.content);
             current.assistant_content = turn.content;
             current.excerpt = truncate_text(turn.content);
             current.content_hash = hash_text(turn.content);
@@ -267,12 +495,6 @@ def segment_steps(turns: list[RawTurn]) -> list[ParsedStep] {
 
         current.trailing_turns.append(turn);
         current.excerpt = truncate_text((current.excerpt + "\n" + turn.content).strip());
-        if current.kind == "OTHER" {
-            current.kind = infer_kind(turn.role, turn.content);
-        }
-        if current.phase == "other" {
-            current.phase = infer_phase(turn.content);
-        }
         if turn.content {
             if current.content_hash {
                 current.content_hash = hash_text(current.content_hash + turn.content);

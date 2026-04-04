@@ -11,6 +11,7 @@ import from traceforge.analysis {
     cluster_view_summary,
     run_view_summary
 }
+import from traceforge.graph_build { invalidate_batch_graph }
 import from traceforge.eval {
     compare_run_harness_summary,
     export_blinded_eval_summary
@@ -64,9 +65,18 @@ walker :pub ParseBatch {
 
 walker :pub AnalyzeBatch {
     has batch_id: str;
+    has force_rebuild: bool = False;
 
     can run with Root entry {
-        report analyze_batch_summary(root, self.batch_id);
+        report analyze_batch_summary(root, self.batch_id, self.force_rebuild);
+    }
+}
+
+walker :pub InvalidateBatchGraph {
+    has batch_id: str;
+
+    can run with Root entry {
+        report invalidate_batch_graph(root, self.batch_id);
     }
 }
 

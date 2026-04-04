@@ -117,13 +117,38 @@ test {
 test {
     result = root spawn GetRunView(run_id="premature_completion");
     data = result.reports[0];
+    assert data["status"] == "stub";
+
+    scoped_result = root spawn GetRunView(run_id="premature_completion", batch_id="sample-starter");
+    scoped_data = scoped_result.reports[0];
+    assert scoped_data["status"] == "graph_backed";
+    assert scoped_data["batch_id"] == "sample-starter";
+    assert scoped_data["primary_failure"] == "PREMATURE_COMPLETION";
+    assert scoped_data["critical_step_idx"] == 1;
+}
+
+test {
+    invalidate_result = root spawn InvalidateBatchGraph(batch_id="sample-starter");
+    invalidate_data = invalidate_result.reports[0];
+    assert invalidate_data["status"] == "invalidated";
+
+    rebuild_result = root spawn AnalyzeBatch(batch_id="sample-starter", force_rebuild=True);
+    rebuild_data = rebuild_result.reports[0];
+    assert rebuild_data["status"] == "graph_rebuilt";
+    assert rebuild_data["run_count"] == 4;
+}
+
+test {
+    result = root spawn GetRunView(run_id="premature_completion", batch_id="sample-starter");
+    data = result.reports[0];
     assert data["status"] == "graph_backed";
+    assert data["batch_id"] == "sample-starter";
     assert data["primary_failure"] == "PREMATURE_COMPLETION";
     assert data["critical_step_idx"] == 1;
 }
 
 test {
-    result = root spawn DiagnoseRun(run_id="premature_completion");
+    result = root spawn DiagnoseRun(run_id="premature_completion", batch_id="sample-starter");
     data = result.reports[0];
     assert data["status"] == "deterministic_diagnosis";
     assert data["failure_class"] == "PREMATURE_COMPLETION";
@@ -137,6 +162,8 @@ test {
     data = result.reports[0];
     assert data["status"] == "deterministic_patch";
     assert "rerun at least one targeted failing test" in data["diff_text"];
+    assert "Evidence Anchors" in data["diff_text"];
+    assert len(data["rules"][0]["supported_by_steps"]) >= 1;
     assert data["stored_in_graph"] == True;
     assert data["llm_used"] == False;
     assert "TraceForge cluster evidence pack" in data["evidence_pack"];
@@ -156,7 +183,7 @@ test {
 }
 
 test {
-    result = root spawn CompareBaseline(run_id="premature_completion");
+    result = root spawn CompareBaseline(run_id="premature_completion", batch_id="sample-starter");
     data = result.reports[0];
     assert data["status"] == "comparison_ready";
     assert data["comparison_mode"] == "deterministic_proxy";
