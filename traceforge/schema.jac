@@ -59,6 +59,7 @@ node Run {
     has instance_id: str = "";
     has task_title: str = "";
     has raw_path: str = "";
+    has metadata: dict[str, any] = {};
     has exit_status: RunStatus = RunStatus.UNKNOWN;
     has api_calls: int = 0;
     has cost: float = 0.0;

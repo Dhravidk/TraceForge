@@ -15,15 +15,16 @@ TraceForge is meant to turn those runs into something judges and users can inspe
 
 ## Current Status
 
-This repo currently contains the Phase 0 scaffold:
+This repo is now past the initial scaffold and running a graph-backed Jac demo path for the starter sample batch.
 
-- Jac-first module structure
-- public walker placeholders
-- graph schema and typed diagnosis scaffolding
-- minimal client app shell
-- planning and submission docs
+- Jac-native parsing for mini-SWE-agent sample trajectories
+- Jac-native deterministic fingerprints and failure-family scoring
+- graph compilation into `Batch`, `Run`, `Step`, artifact, hypothesis, and cluster nodes
+- graph-backed batch, run, cluster, diagnosis, patch, comparison, and report walkers
+- Jac smoke tests for the starter demo path
+- a minimal client that loads live data from the starter batch
 
-The parsing, clustering, and patch synthesis logic are still in progress.
+The remaining major work is deeper typed `by llm()` synthesis, stronger baseline comparison, and turning the current live-data shell into the final demo UI.
 
 ## Repo Layout
 
@@ -40,11 +41,16 @@ The parsing, clustering, and patch synthesis logic are still in progress.
 │   ├── __init__.jac
 │   ├── schema.jac
 │   ├── ingest.jac
+│   ├── parser.jac
+│   ├── features.jac
+│   ├── clustering.jac
+│   ├── critical.jac
+│   ├── graph_build.jac
 │   ├── analysis.jac
 │   ├── llm_ops.jac
+│   ├── reporting.jac
 │   ├── api.jac
 │   └── ui.jac
-├── py/
 ├── demo_runs/
 ├── uploads/
 ├── exports/
@@ -79,7 +85,20 @@ The intended local startup command is:
 jac start --dev
 ```
 
-This environment does not currently have the Jac CLI installed, so the scaffold has been created without runtime verification.
+Verified locally:
+
+```bash
+jac check main.jac
+jac test tests/smoke.jac
+jac enter main.jac AnalyzeBatch sample-starter
+jac enter main.jac LoadSampleBatch starter
+jac enter main.jac GetBatchOverview sample-starter
+jac enter main.jac GetRunView premature_completion
+jac enter main.jac GetClusterView sample-starter:premature_completion:0
+jac enter main.jac CompileMemoryPatch sample-starter:premature_completion:0
+jac enter main.jac CompareBaseline premature_completion
+jac enter main.jac ExportBatchReport sample-starter
+```
 
 Expected project settings are in [jac.toml](/home/gb10/Projects/JacHacks/jac.toml).
 
@@ -87,6 +106,7 @@ Expected project settings are in [jac.toml](/home/gb10/Projects/JacHacks/jac.tom
 
 - Long-term architecture brief: [LONG_TERM_PLAN.md](/home/gb10/Projects/JacHacks/LONG_TERM_PLAN.md)
 - Short-term execution plan: [SHORT_TERM_PLAN.md](/home/gb10/Projects/JacHacks/docs/plans/SHORT_TERM_PLAN.md)
+- Jac-only completion plan: [JAC_ONLY_COMPLETION_PLAN.md](/home/gb10/Projects/JacHacks/docs/plans/JAC_ONLY_COMPLETION_PLAN.md)
 
 ## Submission Notes
 
@@ -99,4 +119,3 @@ The JacHacks site and participant guide emphasize:
 - and a clear 3-minute presentation.
 
 Relevant docs are kept under [docs/submission](/home/gb10/Projects/JacHacks/docs/submission).
-

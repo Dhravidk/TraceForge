@@ -14,16 +14,16 @@ import from traceforge.analysis {
 import from traceforge.llm_ops {
     compile_memory_patch_summary,
     diagnose_cluster_summary,
-    diagnose_run_summary,
-    export_report_summary
+    diagnose_run_summary
 }
+import from traceforge.reporting { export_report_summary }
 
 walker :pub GetStatus {
     can get with Root entry {
         report {
             "project": project_identity(),
-            "phase": "phase_0_scaffold",
-            "message": "TraceForge scaffold is ready for module-level implementation.",
+            "phase": "phase_2_graph_backed_demo",
+            "message": "TraceForge now compiles the starter batch into a Jac graph and serves graph-backed run, cluster, patch, report, and comparison views.",
         };
     }
 }
@@ -56,7 +56,7 @@ walker :pub AnalyzeBatch {
     has batch_id: str;
 
     can run with Root entry {
-        report analyze_batch_summary(self.batch_id);
+        report analyze_batch_summary(root, self.batch_id);
     }
 }
 
@@ -64,7 +64,7 @@ walker :pub GetBatchOverview {
     has batch_id: str;
 
     can run with Root entry {
-        report batch_overview_summary(self.batch_id);
+        report batch_overview_summary(root, self.batch_id);
     }
 }
 
@@ -72,7 +72,7 @@ walker :pub GetClusterView {
     has cluster_id: str;
 
     can run with Root entry {
-        report cluster_view_summary(self.cluster_id);
+        report cluster_view_summary(root, self.cluster_id);
     }
 }
 
@@ -80,7 +80,7 @@ walker :pub GetRunView {
     has run_id: str;
 
     can run with Root entry {
-        report run_view_summary(self.run_id);
+        report run_view_summary(root, self.run_id);
     }
 }
 
@@ -88,7 +88,7 @@ walker :pub DiagnoseRun {
     has run_id: str;
 
     can run with Root entry {
-        report diagnose_run_summary(self.run_id);
+        report diagnose_run_summary(root, self.run_id);
     }
 }
 
@@ -96,7 +96,7 @@ walker :pub DiagnoseCluster {
     has cluster_id: str;
 
     can run with Root entry {
-        report diagnose_cluster_summary(self.cluster_id);
+        report diagnose_cluster_summary(root, self.cluster_id);
     }
 }
 
@@ -104,7 +104,7 @@ walker :pub CompileMemoryPatch {
     has cluster_id: str;
 
     can run with Root entry {
-        report compile_memory_patch_summary(self.cluster_id);
+        report compile_memory_patch_summary(root, self.cluster_id);
     }
 }
 
@@ -112,7 +112,7 @@ walker :pub ExportBatchReport {
     has batch_id: str;
 
     can run with Root entry {
-        report export_report_summary(self.batch_id);
+        report export_report_summary(root, self.batch_id);
     }
 }
 
@@ -120,6 +120,6 @@ walker :pub CompareBaseline {
     has run_id: str;
 
     can run with Root entry {
-        report compare_baseline_summary(self.run_id);
+        report compare_baseline_summary(root, self.run_id);
     }
 }
