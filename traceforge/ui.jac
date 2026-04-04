@@ -12,6 +12,10 @@ cl {
     def:pub app() -> JsxElement {
         has status: str = "Booting TraceForge...";
         has loading: bool = True;
+        has loadingRun: bool = False;
+        has loadingCluster: bool = False;
+        has selectedRunId: str = "";
+        has selectedClusterId: str = "";
         has overview: any = {
             "family_counts": {},
             "clusters": [],
@@ -65,6 +69,55 @@ cl {
             "confidence": 0.0,
         };
 
+        async def load_run(runId: str) -> None {
+            if not runId {
+                return;
+            }
+            selectedRunId = runId;
+            loadingRun = True;
+            status = "Loading run " + runId + "...";
+
+            run_result = root spawn GetRunView(run_id=runId);
+            if run_result.reports {
+                runDetail = run_result.reports[0];
+            }
+
+            diagnosis_result = root spawn DiagnoseRun(run_id=runId);
+            if diagnosis_result.reports {
+                diagnosis = diagnosis_result.reports[0];
+            }
+
+            compare_result = root spawn CompareBaseline(run_id=runId);
+            if compare_result.reports {
+                comparison = compare_result.reports[0];
+            }
+
+            status = "Showing run " + runId + ".";
+            loadingRun = False;
+        }
+
+        async def load_cluster(clusterId: str) -> None {
+            if not clusterId {
+                return;
+            }
+            selectedClusterId = clusterId;
+            loadingCluster = True;
+            status = "Loading cluster " + clusterId + "...";
+
+            cluster_result = root spawn GetClusterView(cluster_id=clusterId);
+            if cluster_result.reports {
+                clusterDetail = cluster_result.reports[0];
+            }
+
+            patch_result = root spawn CompileMemoryPatch(cluster_id=clusterId);
+            if patch_result.reports {
+                patchDetail = patch_result.reports[0];
+            }
+
+            status = "Showing cluster " + clusterId + ".";
+            loadingCluster = False;
+        }
+
         async can with entry {
             analyze = root spawn AnalyzeBatch(batch_id="sample-starter");
             if analyze.reports {
@@ -78,30 +131,12 @@ cl {
 
             if overview["runs"].length > 0 {
                 first_run_id = String(overview["runs"][0]["run_id"]);
-                run_result = root spawn GetRunView(run_id=first_run_id);
-                if run_result.reports {
-                    runDetail = run_result.reports[0];
-                }
-                diagnosis_result = root spawn DiagnoseRun(run_id=first_run_id);
-                if diagnosis_result.reports {
-                    diagnosis = diagnosis_result.reports[0];
-                }
-                compare_result = root spawn CompareBaseline(run_id=first_run_id);
-                if compare_result.reports {
-                    comparison = compare_result.reports[0];
-                }
+                load_run(first_run_id);
             }
 
             if overview["clusters"].length > 0 {
                 first_cluster_id = String(overview["clusters"][0]["cluster_id"]);
-                cluster_result = root spawn GetClusterView(cluster_id=first_cluster_id);
-                if cluster_result.reports {
-                    clusterDetail = cluster_result.reports[0];
-                }
-                patch_result = root spawn CompileMemoryPatch(cluster_id=first_cluster_id);
-                if patch_result.reports {
-                    patchDetail = patch_result.reports[0];
-                }
+                load_cluster(first_cluster_id);
             }
 
             status = "Starter batch loaded through graph-backed walkers.";
@@ -121,6 +156,14 @@ cl {
         recurringSignals = clusterDetail["recurring_signals"] || [];
         patchRules = patchDetail["rules"] || [];
         structuredWindow = comparison["structured"]["evidence_window"] || [];
+        runStatusText = "Run details ready.";
+        clusterStatusText = "Cluster details ready.";
+        if loadingRun {
+            runStatusText = "Refreshing run details...";
+        }
+        if loadingCluster {
+            clusterStatusText = "Refreshing cluster details...";
+        }
 
         if loading {
             return <main className="shell">
@@ -169,7 +212,11 @@ cl {
                     <ul>
                         {[
                             <li>
+                                <button onClick={lambda e: any -> None { load_cluster(String(cluster["cluster_id"])); }}>
+                                    Open {String(cluster["label"])}
+                                </button>
                                 <strong>{String(cluster["label"])}</strong> | {String(cluster["failure_class"])} | size {String(cluster["size"])}
+                                <div>Cluster ID: {String(cluster["cluster_id"])}</div>
                                 <div>{String(cluster["summary"])}</div>
                             </li>
                             for cluster in clusters
@@ -179,6 +226,9 @@ cl {
                     <ul>
                         {[
                             <li>
+                                <button onClick={lambda e: any -> None { load_run(String(run["run_id"])); }}>
+                                    Open {String(run["run_id"])}
+                                </button>
                                 <strong>{String(run["run_id"])}</strong> | {String(run["primary_failure"])} | critical step {String(run["critical_step_idx"])}
                                 <div>{String(run["summary"])}</div>
                             </li>
@@ -191,6 +241,8 @@ cl {
             <section className="panels">
                 <article className="panel">
                     <h2>Representative Run</h2>
+                    <p>Selected run: {String(selectedRunId || "none")}</p>
+                    <p>{runStatusText}</p>
                     <p><strong>{String(runDetail["run_id"] || "")}</strong></p>
                     <p>{String(runDetail["summary"] || "")}</p>
                     <p>Primary failure: {String(runDetail["primary_failure"] || "UNKNOWN")}</p>
@@ -236,6 +288,8 @@ cl {
             <section className="panels">
                 <article className="panel">
                     <h2>Representative Cluster</h2>
+                    <p>Selected cluster: {String(selectedClusterId || "none")}</p>
+                    <p>{clusterStatusText}</p>
                     <p><strong>{String(clusterDetail["label"] || "")}</strong></p>
                     <p>{String(clusterDetail["summary"] || "")}</p>
                     <p>Failure class: {String(clusterDetail["failure_class"] || "UNKNOWN")}</p>
@@ -248,6 +302,9 @@ cl {
                     <ul>
                         {[
                             <li>
+                                <button onClick={lambda e: any -> None { load_run(String(item["run_id"])); }}>
+                                    Load run
+                                </button>
                                 <strong>{String(item["run_id"])}</strong> | critical step {String(item["critical_step_idx"])}
                                 <div>{String(item["summary"])}</div>
                             </li>
