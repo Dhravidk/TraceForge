@@ -24,9 +24,10 @@ This repo is now past the initial scaffold and running a graph-backed Jac demo p
 - discovered batch catalog with switching between sample and local upload batches
 - credential-gated typed `by llm()` reasoning with deterministic fallback when no model key is present
 - Jac smoke tests for the starter demo path
-- a readable demo UI that loads live data from the starter batch
+- a readable demo UI organized around batch overview, cluster explorer, run forensics, and baseline comparison
+- markdown batch report export that doubles as a demo and Devpost backup artifact
 
-The remaining major work is deeper typed `by llm()` synthesis, stronger baseline comparison, and polishing the current demo UI into the final JacHacks presentation surface.
+The remaining major work is deeper typed `by llm()` synthesis, stronger baseline evidence selection, and final submission polish around the current JacHacks demo surface.
 
 ## Repo Layout
 

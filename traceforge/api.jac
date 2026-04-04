@@ -23,8 +23,8 @@ walker :pub GetStatus {
     can get with Root entry {
         report {
             "project": project_identity(),
-            "phase": "phase_4_multi_batch_demo",
-            "message": "TraceForge now ships a Jac-only graph-backed demo with discovered batch switching, scoped run views, diagnosis, patch persistence, comparison, report, and demo UI views.",
+            "phase": "phase_5_submission_polish",
+            "message": "TraceForge now ships a Jac-only graph-backed demo with a four-part presentation flow: batch overview, cluster explorer, run forensics, and baseline comparison.",
         };
     }
 }

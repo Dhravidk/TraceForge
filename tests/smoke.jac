@@ -1,3 +1,5 @@
+import from pathlib { Path }
+
 include traceforge.__init__;
 include traceforge.schema;
 include traceforge.ingest;
@@ -10,6 +12,12 @@ include traceforge.analysis;
 include traceforge.llm_ops;
 include traceforge.reporting;
 include traceforge.api;
+
+test {
+    status_result = root spawn GetStatus();
+    status_data = status_result.reports[0];
+    assert status_data["phase"] == "phase_5_submission_polish";
+}
 
 test {
     result = root spawn AnalyzeBatch(batch_id="sample-starter");
@@ -90,4 +98,8 @@ test {
     data = result.reports[0];
     assert data["status"] == "exported";
     assert data["cluster_count"] == 4;
+    report_text = Path(data["path"]).read_text(encoding="utf-8");
+    assert "## Demo Highlights" in report_text;
+    assert "#### AGENTS.md Patch" in report_text;
+    assert "## Baseline Comparison Snapshot" in report_text;
 }

@@ -17,5 +17,17 @@ TraceForge compiles batches of mini-SWE-agent trajectories into a Jac graph, clu
 
 ## Current build status
 
-This outline tracks the repo scaffold and should be updated alongside implementation.
+- Jac-native parser and fingerprint pipeline for mini-SWE-agent trajectories
+- Graph compilation into `Batch`, `Run`, `Step`, artifact, hypothesis, cluster, and memory-patch nodes
+- Batch overview, cluster explorer, run forensics, and baseline comparison UI in Jac
+- Local upload-batch support alongside sample demo batches
+- Credential-gated typed `by llm()` hooks with deterministic fallback
+- Markdown batch report export for demo and Devpost backup artifacts
 
+## What judges can see immediately
+
+- recurring failure families across a batch
+- a representative cluster with recurring signals
+- a failed run with a localized critical step
+- an `AGENTS.md` patch synthesized from the cluster motif
+- a raw-baseline versus structured-analysis comparison
