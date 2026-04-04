@@ -19,6 +19,24 @@ test {
 }
 
 test {
+    upload_result = root spawn UploadBatch(filename="local_demo_batch");
+    upload_data = upload_result.reports[0];
+    assert upload_data["batch_id"] == "upload-local_demo";
+    assert upload_data["status"] == "ready";
+    assert upload_data["run_count"] == 2;
+
+    parse_result = root spawn ParseBatch(batch_id="upload-local_demo");
+    parse_data = parse_result.reports[0];
+    assert parse_data["status"] == "parsed";
+    assert parse_data["run_count"] == 2;
+
+    analyze_result = root spawn AnalyzeBatch(batch_id="upload-local_demo");
+    analyze_data = analyze_result.reports[0];
+    assert analyze_data["run_count"] == 2;
+    assert analyze_data["cluster_count"] >= 1;
+}
+
+test {
     result = root spawn GetRunView(run_id="premature_completion");
     data = result.reports[0];
     assert data["status"] == "graph_backed";

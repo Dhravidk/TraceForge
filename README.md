@@ -90,6 +90,9 @@ Verified locally:
 ```bash
 jac check main.jac
 jac test tests/smoke.jac
+jac enter main.jac UploadBatch local_demo_batch
+jac enter main.jac ParseBatch upload-local_demo
+jac enter main.jac AnalyzeBatch upload-local_demo
 jac enter main.jac AnalyzeBatch sample-starter
 jac enter main.jac LoadSampleBatch starter
 jac enter main.jac GetBatchOverview sample-starter
@@ -99,6 +102,8 @@ jac enter main.jac CompileMemoryPatch sample-starter:premature_completion:0
 jac enter main.jac CompareBaseline premature_completion
 jac enter main.jac ExportBatchReport sample-starter
 ```
+
+Local upload batches are discovered from folders under [uploads](/home/gb10/Projects/JacHacks/uploads) that contain `*.traj.json` files. The repo includes [local_demo_batch](/home/gb10/Projects/JacHacks/uploads/local_demo_batch) as a fixture for that path.
 
 Expected project settings are in [jac.toml](/home/gb10/Projects/JacHacks/jac.toml).
 

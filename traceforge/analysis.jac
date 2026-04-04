@@ -1,7 +1,6 @@
 import from traceforge.ingest {
-    sample_batch_files,
-    sample_batch_summary,
-    sample_file_run_id
+    batch_id_for_run,
+    run_source_path
 }
 import from traceforge.schema { Batch, Cluster, Run, Step }
 import from traceforge.features { summarize_counts }
@@ -27,22 +26,14 @@ import from traceforge.graph_build {
     step_kind_name
 }
 
-def sample_run_path(run_id: str, sample_name: str = "starter") -> str {
-    for path in sample_batch_files(sample_name) {
-        if sample_file_run_id(path) == run_id {
-            return path;
-        }
-    }
-    return "";
-}
-
 def _ensure_graph_for_run(root_node: any, run_id: str) -> any {
     run_node = find_run_node(root_node, run_id);
     if run_node is not None {
         return run_node;
     }
-    if sample_run_path(run_id) {
-        ensure_batch_graph(root_node, "sample-starter");
+    batch_id = batch_id_for_run(run_id);
+    if batch_id and run_source_path(run_id) {
+        ensure_batch_graph(root_node, batch_id);
         return find_run_node(root_node, run_id);
     }
     return None;

@@ -1,0 +1,36 @@
+{
+  "run_id": "invalid_patch",
+  "instance_id": "demo-003",
+  "task_title": "Fix import ordering in service bootstrap",
+  "metadata": {
+    "model": "starter-model",
+    "status": "failed"
+  },
+  "trajectory": [
+    {
+      "role": "assistant",
+      "content": "I will patch the bootstrap module directly."
+    },
+    {
+      "role": "tool",
+      "content": "apply_patch <<'PATCH'\n*** Update File: src/bootstrap.py\n- import service\n+ import service\n+ if True print('oops')\nPATCH"
+    },
+    {
+      "role": "assistant",
+      "content": "Now I will run the targeted test."
+    },
+    {
+      "role": "tool",
+      "content": "pytest tests/test_bootstrap.py -q\nE   SyntaxError: invalid syntax\nTraceback (most recent call last):"
+    },
+    {
+      "role": "assistant",
+      "content": "I think the patch is still acceptable and will submit."
+    },
+    {
+      "role": "tool",
+      "content": "submit final answer"
+    }
+  ]
+}
+

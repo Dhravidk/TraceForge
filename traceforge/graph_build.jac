@@ -29,7 +29,7 @@ import from traceforge.schema {
     TestEvent,
     TouchesFile
 }
-import from traceforge.ingest { sample_batch_files, sample_batch_summary }
+import from traceforge.ingest { batch_files, batch_summary }
 import from traceforge.parser {
     ParsedRun,
     extract_file_tokens,
@@ -523,9 +523,8 @@ def ensure_batch_graph(root_node: any, target_batch_id: str) -> dict[str, any] {
         };
     }
 
-    sample_name = target_batch_id.removeprefix("sample-");
-    batch_summary = sample_batch_summary(sample_name);
-    if batch_summary["status"] != "ready" {
+    batch_meta = batch_summary(target_batch_id);
+    if batch_meta["status"] != "ready" {
         return {
             "batch": None,
             "created": False,
@@ -535,15 +534,15 @@ def ensure_batch_graph(root_node: any, target_batch_id: str) -> dict[str, any] {
 
     root_node +>: HasBatch() :+> (batch := Batch(
         batch_id=target_batch_id,
-        name=str(batch_summary["name"]),
-        source_format=str(batch_summary["source_format"]),
+        name=str(batch_meta["name"]),
+        source_format=str(batch_meta["source_format"]),
         created_at=current_timestamp(),
-        run_count=int(batch_summary["run_count"]),
+        run_count=int(batch_meta["run_count"]),
     ));
 
     file_nodes: dict[str, any] = {};
     run_records: list[dict[str, any]] = [];
-    for (order, path) in enumerate(sample_batch_files(sample_name)) {
+    for (order, path) in enumerate(batch_files(target_batch_id)) {
         parsed_run = parse_run(path);
         run_records.append(_create_run_node(batch, parsed_run, order, file_nodes));
     }
