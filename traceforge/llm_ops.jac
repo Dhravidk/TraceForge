@@ -1,38 +1,161 @@
+import from traceforge.analysis { cluster_view_summary, run_view_summary }
+import from traceforge.schema { ClusterLabel, FailureClass, MemoryPatchProposal }
+
 def choose_failure_class(text: str) -> FailureClass by llm();
 
 def draft_cluster_label(text: str) -> ClusterLabel by llm();
 
 def draft_memory_patch(text: str) -> MemoryPatchProposal by llm();
 
-def diagnose_run_summary(run_id: str) -> dict[str, any] {
+def _diagnosis_reason(failure_class: str) -> str {
+    reasons = {
+        "PREMATURE_COMPLETION": "the run moved to submission before validating that the failing state had recovered",
+        "INVALID_PATCH": "the patch introduced or preserved a syntax-level failure that the run never repaired",
+        "WRONG_FILE_FOCUS": "the run spent effort on files that did not reduce the target failure",
+        "OSCILLATION_LOOP": "the run repeated the same search or file-touch pattern without creating recovery evidence",
+        "TOOL_MISUSE": "tool interactions kept returning failure signals and the run never corrected the workflow",
+        "STALE_CONTEXT_OR_BAD_PLAN": "the run stayed in planning or inspection too long without decisive repo interaction",
+        "REQUIREMENT_DRIFT": "the run drifted away from the issue target and never came back to a validating path",
+        "UNKNOWN": "the failure pattern is not yet classified strongly enough for a tighter explanation",
+    };
+    return reasons.get(failure_class, reasons["UNKNOWN"]);
+}
+
+def _cluster_rule_lines(failure_class: str) -> list[str] {
+    if failure_class == "PREMATURE_COMPLETION" {
+        return [
+            "Before submitting, rerun at least one targeted failing test if any test failed earlier.",
+            "Do not submit if the latest visible state lacks post-patch validation.",
+        ];
+    }
+    if failure_class == "INVALID_PATCH" {
+        return [
+            "After applying a patch, run the targeted test before submitting.",
+            "Do not submit when the latest output still shows syntax, import, or traceback failures.",
+        ];
+    }
+    if failure_class == "OSCILLATION_LOOP" {
+        return [
+            "After two repeated search or same-file inspection cycles with no new evidence, change strategy.",
+            "If the same file has been touched repeatedly without recovery, re-rank candidate files from failing tests and errors.",
+        ];
+    }
+    if failure_class == "WRONG_FILE_FOCUS" {
+        return [
+            "Prioritize files named in failing tests, stack traces, or direct issue context before editing secondary files.",
+            "If edits do not reduce the original failure signal, stop and re-rank the target files.",
+        ];
+    }
+    if failure_class == "TOOL_MISUSE" {
+        return [
+            "Treat repeated non-zero tool outcomes as a strategy failure and adjust before continuing.",
+            "Do not keep issuing malformed or irrelevant commands after the same failure repeats.",
+        ];
+    }
+    if failure_class == "STALE_CONTEXT_OR_BAD_PLAN" {
+        return [
+            "Limit consecutive planning or search-only turns without touching the repo or validating a hypothesis.",
+            "After prolonged inspection, commit to one concrete file-level hypothesis and test it.",
+        ];
+    }
+    if failure_class == "REQUIREMENT_DRIFT" {
+        return [
+            "Keep edits anchored to the failing test, stack trace, or issue target.",
+            "If later steps stop mentioning the original failure context, pause and re-establish the target before editing again.",
+        ];
+    }
+    return [
+        "Prefer targeted validation before submission.",
+        "Escalate to a new strategy when repeated steps stop producing new evidence.",
+    ];
+}
+
+def diagnose_run_summary(root_node: any, run_id: str) -> dict[str, any] {
+    run_view = run_view_summary(root_node, run_id);
+    if run_view["status"] == "stub" {
+        return {
+            "run_id": run_id,
+            "status": "missing",
+            "message": "Run was not found.",
+        };
+    }
+    evidence = [];
+    for step in run_view["critical_evidence_window"] {
+        evidence.append(
+            {
+                "step_idx": step["idx"],
+                "artifact": step["phase"],
+                "quote": step["excerpt"],
+            }
+        );
+    }
+    failure_class = str(run_view.get("primary_failure") or "UNKNOWN");
     return {
         "run_id": run_id,
-        "status": "not_implemented",
-        "message": "Typed run diagnosis will be added once evidence packs exist.",
+        "failure_class": failure_class,
+        "critical_step_idx": run_view["critical_step_idx"],
+        "irreversible_because": _diagnosis_reason(failure_class),
+        "evidence": evidence,
+        "confidence": 0.68 if run_view["critical_step_idx"] >= 0 else 0.2,
+        "status": "deterministic_diagnosis",
     };
 }
 
-def diagnose_cluster_summary(cluster_id: str) -> dict[str, any] {
+def diagnose_cluster_summary(root_node: any, cluster_id: str) -> dict[str, any] {
+    cluster_view = cluster_view_summary(root_node, cluster_id);
+    if cluster_view["status"] == "missing" {
+        return {
+            "cluster_id": cluster_id,
+            "status": "missing",
+            "message": "Cluster was not found.",
+        };
+    }
     return {
         "cluster_id": cluster_id,
-        "status": "not_implemented",
-        "message": "Cluster diagnosis depends on clustering and medoid selection.",
+        "label": cluster_view["label"],
+        "summary": cluster_view["summary"],
+        "failure_class": cluster_view["failure_class"],
+        "confidence": 0.7,
+        "status": "deterministic_cluster_label",
     };
 }
 
-def compile_memory_patch_summary(cluster_id: str) -> dict[str, any] {
+def compile_memory_patch_summary(root_node: any, cluster_id: str) -> dict[str, any] {
+    cluster_view = cluster_view_summary(root_node, cluster_id);
+    if cluster_view["status"] == "missing" {
+        return {
+            "cluster_id": cluster_id,
+            "status": "missing",
+            "message": "Cluster was not found.",
+        };
+    }
+    rules = _cluster_rule_lines(str(cluster_view["failure_class"]));
+    diff_lines = [
+        "--- AGENTS.md",
+        "+++ AGENTS.md",
+        "@@",
+        "+## " + str(cluster_view["label"]),
+    ];
+    for rule in rules {
+        diff_lines.append("+- " + rule);
+    }
     return {
         "cluster_id": cluster_id,
-        "status": "not_implemented",
-        "message": "Memory patch synthesis requires repeated evidence across runs.",
+        "scope": "cluster",
+        "cluster_label": cluster_view["label"],
+        "summary": "Operational memory patch synthesized from the current cluster motif.",
+        "rules": [
+            {
+                "title": str(cluster_view["label"]) + " rule " + str(index + 1),
+                "rationale": _diagnosis_reason(str(cluster_view["failure_class"])),
+                "rule_text": rule,
+                "supported_by_steps": [],
+                "confidence": 0.64,
+            }
+            for (index, rule) in enumerate(rules)
+        ],
+        "diff_text": "\n".join(diff_lines),
+        "confidence": 0.64,
+        "status": "deterministic_patch",
     };
 }
-
-def export_report_summary(batch_id: str) -> dict[str, any] {
-    return {
-        "batch_id": batch_id,
-        "status": "not_implemented",
-        "message": "Markdown export will be added after the batch overview stabilizes.",
-    };
-}
-

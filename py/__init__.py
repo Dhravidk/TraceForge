@@ -1,2 +1,0 @@
-"""TraceForge Python helper package."""
-

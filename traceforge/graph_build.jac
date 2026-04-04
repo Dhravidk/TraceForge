@@ -1,0 +1,530 @@
+import from datetime { datetime }
+import from pathlib { Path }
+import from traceforge.schema {
+    Batch,
+    Cluster,
+    ErrorEvent,
+    FailureClass,
+    FailureHypothesis,
+    FileArtifact,
+    HasBatch,
+    HasRun,
+    HasStep,
+    InCluster,
+    NextStep,
+    Patch,
+    PatchesFile,
+    ProducesPatch,
+    RaisesError,
+    Run,
+    RunStatus,
+    RunsTest,
+    Severity,
+    SimilarRun,
+    Step,
+    StepKind,
+    SupportsHypothesis,
+    TestEvent,
+    TouchesFile
+}
+import from traceforge.ingest { sample_batch_files, sample_batch_summary }
+import from traceforge.parser {
+    ParsedRun,
+    extract_file_tokens,
+    hash_text,
+    parse_run,
+    truncate_text
+}
+import from traceforge.features {
+    build_run_digest,
+    compute_run_fingerprint,
+    dominant_failure_label,
+    fingerprint_to_dict
+}
+import from traceforge.clustering { build_clusters, similarity_score }
+import from traceforge.critical { localize_critical_step }
+
+def current_timestamp() -> str {
+    return datetime.utcnow().isoformat();
+}
+
+def failure_class_to_enum(label: str) -> FailureClass {
+    match label {
+        case "PREMATURE_COMPLETION": return FailureClass.PREMATURE_COMPLETION;
+        case "INVALID_PATCH": return FailureClass.INVALID_PATCH;
+        case "WRONG_FILE_FOCUS": return FailureClass.WRONG_FILE_FOCUS;
+        case "OSCILLATION_LOOP": return FailureClass.OSCILLATION_LOOP;
+        case "TOOL_MISUSE": return FailureClass.TOOL_MISUSE;
+        case "STALE_CONTEXT_OR_BAD_PLAN": return FailureClass.STALE_CONTEXT_OR_BAD_PLAN;
+        case "REQUIREMENT_DRIFT": return FailureClass.REQUIREMENT_DRIFT;
+        case _: return FailureClass.UNKNOWN;
+    }
+}
+
+def failure_class_name(value: FailureClass) -> str {
+    match value {
+        case FailureClass.PREMATURE_COMPLETION: return "PREMATURE_COMPLETION";
+        case FailureClass.INVALID_PATCH: return "INVALID_PATCH";
+        case FailureClass.WRONG_FILE_FOCUS: return "WRONG_FILE_FOCUS";
+        case FailureClass.OSCILLATION_LOOP: return "OSCILLATION_LOOP";
+        case FailureClass.TOOL_MISUSE: return "TOOL_MISUSE";
+        case FailureClass.STALE_CONTEXT_OR_BAD_PLAN: return "STALE_CONTEXT_OR_BAD_PLAN";
+        case FailureClass.REQUIREMENT_DRIFT: return "REQUIREMENT_DRIFT";
+        case _: return "UNKNOWN";
+    }
+}
+
+def step_kind_to_enum(label: str) -> StepKind {
+    match label {
+        case "SYSTEM": return StepKind.SYSTEM;
+        case "USER": return StepKind.USER;
+        case "ASSISTANT": return StepKind.ASSISTANT;
+        case "TOOL": return StepKind.TOOL;
+        case "COMMAND": return StepKind.COMMAND;
+        case "EDIT": return StepKind.EDIT;
+        case "TEST": return StepKind.TEST;
+        case "SUBMIT": return StepKind.SUBMIT;
+        case "ERROR": return StepKind.ERROR;
+        case _: return StepKind.OTHER;
+    }
+}
+
+def step_kind_name(value: StepKind) -> str {
+    match value {
+        case StepKind.SYSTEM: return "SYSTEM";
+        case StepKind.USER: return "USER";
+        case StepKind.ASSISTANT: return "ASSISTANT";
+        case StepKind.TOOL: return "TOOL";
+        case StepKind.COMMAND: return "COMMAND";
+        case StepKind.EDIT: return "EDIT";
+        case StepKind.TEST: return "TEST";
+        case StepKind.SUBMIT: return "SUBMIT";
+        case StepKind.ERROR: return "ERROR";
+        case _: return "OTHER";
+    }
+}
+
+def run_status_from_text(status_text: str) -> RunStatus {
+    lower = status_text.lower();
+    if lower in {"resolved", "passed", "success", "succeeded"} {
+        return RunStatus.RESOLVED;
+    }
+    if lower in {"submitted"} {
+        return RunStatus.SUBMITTED;
+    }
+    if lower in {"interrupted"} {
+        return RunStatus.INTERRUPTED;
+    }
+    if "limit" in lower {
+        return RunStatus.LIMITS_EXCEEDED;
+    }
+    if lower in {"failed", "error", "error_exit"} {
+        return RunStatus.ERROR_EXIT;
+    }
+    return RunStatus.UNKNOWN;
+}
+
+def run_status_name(value: RunStatus) -> str {
+    match value {
+        case RunStatus.RESOLVED: return "resolved";
+        case RunStatus.SUBMITTED: return "submitted";
+        case RunStatus.INTERRUPTED: return "interrupted";
+        case RunStatus.LIMITS_EXCEEDED: return "limits_exceeded";
+        case RunStatus.ERROR_EXIT: return "error_exit";
+        case _: return "unknown";
+    }
+}
+
+def error_type_from_text(text: str) -> str {
+    lower = text.lower();
+    if "syntaxerror" in lower or "invalid syntax" in lower {
+        return "SyntaxError";
+    }
+    if "importerror" in lower or "module not found" in lower {
+        return "ImportError";
+    }
+    if "traceback" in lower {
+        return "Traceback";
+    }
+    if "failed" in lower {
+        return "TestFailure";
+    }
+    return "ErrorSignal";
+}
+
+def test_status_from_text(text: str) -> str {
+    lower = text.lower();
+    if " passed" in lower or lower.startswith("passed") or "1 passed" in lower {
+        return "passed";
+    }
+    if "failed" in lower or "error" in lower or "traceback" in lower {
+        return "failed";
+    }
+    return "unknown";
+}
+
+def patch_stats(text: str) -> dict[str, any] {
+    adds = 0;
+    dels = 0;
+    for line in text.split("\n") {
+        if line.startswith("+++") or line.startswith("---") {
+            continue;
+        }
+        if line.startswith("+") {
+            adds += 1;
+        } elif line.startswith("-") {
+            dels += 1;
+        }
+    }
+    return {"adds": adds, "dels": dels};
+}
+
+def list_batch_runs(batch: Batch) -> list[Run] {
+    return sorted(
+        [batch ->:HasRun:->][?:Run],
+        key=lambda item: any -> any : item.run_id,
+    );
+}
+
+def list_run_steps(run_node: Run) -> list[Step] {
+    return sorted(
+        [run_node ->:HasStep:->][?:Step],
+        key=lambda item: any -> any : item.idx,
+    );
+}
+
+def list_step_files(step_node: Step) -> list[FileArtifact] {
+    return sorted(
+        [step_node ->:TouchesFile:->][?:FileArtifact],
+        key=lambda item: any -> any : item.path,
+    );
+}
+
+def list_step_patches(step_node: Step) -> list[Patch] {
+    return [step_node ->:ProducesPatch:->][?:Patch];
+}
+
+def list_step_tests(step_node: Step) -> list[TestEvent] {
+    return [step_node ->:RunsTest:->][?:TestEvent];
+}
+
+def list_step_errors(step_node: Step) -> list[ErrorEvent] {
+    return [step_node ->:RaisesError:->][?:ErrorEvent];
+}
+
+def list_run_hypotheses(run_node: Run) -> list[FailureHypothesis] {
+    return [run_node ->:SupportsHypothesis:->][?:FailureHypothesis];
+}
+
+def list_run_clusters(run_node: Run) -> list[Cluster] {
+    return [run_node ->:InCluster:->][?:Cluster];
+}
+
+def list_batch_clusters(batch: Batch) -> list[Cluster] {
+    clusters: list[Cluster] = [];
+    seen: set[str] = set();
+    for run_node in list_batch_runs(batch) {
+        for cluster_node in list_run_clusters(run_node) {
+            if cluster_node.cluster_id in seen {
+                continue;
+            }
+            seen.add(cluster_node.cluster_id);
+            clusters.append(cluster_node);
+        }
+    }
+    return sorted(clusters, key=lambda item: any -> any : item.cluster_id);
+}
+
+def find_batch_node(root_node: any, target_batch_id: str) -> any {
+    batches = [root_node ->:HasBatch:->][?:Batch, batch_id == target_batch_id];
+    if batches {
+        return batches[0];
+    }
+    return None;
+}
+
+def find_run_node(root_node: any, target_run_id: str) -> any {
+    for batch in [root_node ->:HasBatch:->][?:Batch] {
+        runs = [batch ->:HasRun:->][?:Run, run_id == target_run_id];
+        if runs {
+            return runs[0];
+        }
+    }
+    return None;
+}
+
+def find_batch_for_run(root_node: any, target_run_id: str) -> any {
+    for batch in [root_node ->:HasBatch:->][?:Batch] {
+        runs = [batch ->:HasRun:->][?:Run, run_id == target_run_id];
+        if runs {
+            return batch;
+        }
+    }
+    return None;
+}
+
+def find_cluster_node(batch: Batch, target_cluster_id: str) -> any {
+    for cluster_node in list_batch_clusters(batch) {
+        if cluster_node.cluster_id == target_cluster_id {
+            return cluster_node;
+        }
+    }
+    return None;
+}
+
+def _file_node(path: str, file_nodes: dict[str, any]) -> any {
+    if path in file_nodes {
+        return file_nodes[path];
+    }
+    file_node = FileArtifact(
+        path=path,
+        basename=Path(path).name,
+        ext=Path(path).suffix,
+    );
+    file_nodes[path] = file_node;
+    return file_node;
+}
+
+def _attach_failure_hypotheses(run_node: Run, fingerprint: dict[str, any]) -> None {
+    scores = fingerprint["failure_class_scores"];
+    for label in scores {
+        score = float(scores[label]);
+        if score <= 0.0 {
+            continue;
+        }
+        run_node +>: SupportsHypothesis(weight=score) :+> FailureHypothesis(
+            hyp_id=f"{run_node.run_id}:{label}",
+            label=failure_class_to_enum(str(label)),
+            score=score,
+            rationale=f"Deterministic score for {label}",
+        );
+    }
+}
+
+def _attach_step_artifacts(step_node: Step, file_nodes: dict[str, any], parsed_step: any, run_id: str) -> None {
+    linked_files: list[any] = [];
+    for file_path in parsed_step.touched_files {
+        file_node = _file_node(file_path, file_nodes);
+        step_node +>: TouchesFile() :+> file_node;
+        linked_files.append(file_node);
+    }
+
+    if parsed_step.patch_text {
+        stats = patch_stats(parsed_step.patch_text);
+        patch_file_path = parsed_step.touched_files[0] if parsed_step.touched_files else "";
+        patch_node = Patch(
+            patch_id=f"{run_id}:patch:{parsed_step.index}",
+            file_path=patch_file_path,
+            adds=stats["adds"],
+            dels=stats["dels"],
+            parse_ok=not ("syntaxerror" in parsed_step.patch_text.lower() or "invalid syntax" in parsed_step.patch_text.lower()),
+            patch_hash=hash_text(parsed_step.patch_text),
+        );
+        step_node +>: ProducesPatch() :+> patch_node;
+        if linked_files {
+            patch_node +>: PatchesFile() :+> linked_files[0];
+        }
+    }
+
+    if parsed_step.test_text {
+        failing_tests = [];
+        for token in extract_file_tokens(parsed_step.test_text) {
+            if "::" in token or token.startswith("tests/") {
+                failing_tests.append(token);
+            }
+        }
+        step_node +>: RunsTest() :+> TestEvent(
+            test_id=f"{run_id}:test:{parsed_step.index}",
+            command=truncate_text(parsed_step.test_text, 240),
+            status=test_status_from_text(parsed_step.test_text),
+            failing_tests=failing_tests,
+            excerpt=truncate_text(parsed_step.test_text, 240),
+        );
+    }
+
+    if parsed_step.error_text {
+        step_node +>: RaisesError() :+> ErrorEvent(
+            error_id=f"{run_id}:error:{parsed_step.index}",
+            error_type=error_type_from_text(parsed_step.error_text),
+            message=truncate_text(parsed_step.error_text, 240),
+            severity=Severity.ERROR,
+        );
+    }
+}
+
+def _create_run_node(batch: Batch, parsed_run: ParsedRun, order: int, file_nodes: dict[str, any]) -> dict[str, any] {
+    fingerprint = fingerprint_to_dict(compute_run_fingerprint(parsed_run));
+    primary_failure = dominant_failure_label(fingerprint);
+    critical = localize_critical_step(parsed_run, fingerprint);
+    summary = build_run_digest(parsed_run, fingerprint);
+
+    batch +>: HasRun(order=order) :+> (run_node := Run(
+        run_id=parsed_run.run_id,
+        instance_id=parsed_run.instance_id,
+        task_title=parsed_run.task_title,
+        raw_path=parsed_run.source_path,
+        metadata=parsed_run.metadata,
+        exit_status=run_status_from_text(str(parsed_run.metadata.get("status") or "")),
+        step_count=len(parsed_run.steps),
+        unique_files=int(fingerprint["num_unique_files"]),
+        fingerprint=fingerprint,
+        primary_failure=failure_class_to_enum(primary_failure),
+        critical_step_idx=int(critical["critical_step_idx"]),
+        summary=summary,
+    ));
+
+    seen_hashes: set[str] = set();
+    previous_step_node = None;
+    for parsed_step in parsed_run.steps {
+        is_repeated = parsed_step.content_hash in seen_hashes;
+        seen_hashes.add(parsed_step.content_hash);
+        run_node +>: HasStep(order=parsed_step.index) :+> (step_node := Step(
+            step_id=f"{parsed_run.run_id}:step:{parsed_step.index}",
+            idx=parsed_step.index,
+            kind=step_kind_to_enum(parsed_step.kind),
+            role=parsed_step.role,
+            phase=parsed_step.phase,
+            excerpt=parsed_step.excerpt,
+            raw_offset=parsed_step.index,
+            content_hash=parsed_step.content_hash,
+            repeated=is_repeated,
+        ));
+        if previous_step_node is not None {
+            previous_step_node +>: NextStep() :+> step_node;
+        }
+        previous_step_node = step_node;
+        _attach_step_artifacts(step_node, file_nodes, parsed_step, parsed_run.run_id);
+    }
+
+    _attach_failure_hypotheses(run_node, fingerprint);
+    return {
+        "run_node": run_node,
+        "run_id": parsed_run.run_id,
+        "task_title": parsed_run.task_title,
+        "fingerprint": fingerprint,
+        "primary_failure": primary_failure,
+        "summary": summary,
+        "critical": critical,
+    };
+}
+
+def _attach_clusters(batch: Batch, run_records: list[dict[str, any]], batch_id: str) -> None {
+    clusters = build_clusters(run_records, batch_id);
+    run_node_map: dict[str, any] = {};
+    record_map: dict[str, dict[str, any]] = {};
+    for record in run_records {
+        run_node_map[record["run_id"]] = record["run_node"];
+        record_map[record["run_id"]] = record;
+    }
+
+    for cluster in clusters {
+        cluster_node = Cluster(
+            cluster_id=cluster["cluster_id"],
+            label=cluster["label"],
+            failure_class=failure_class_to_enum(str(cluster["failure_class"])),
+            size=int(cluster["size"]),
+            medoid_run_id=str(cluster["medoid_run_id"]),
+            summary=str(cluster["summary"]),
+        );
+        run_ids = cluster["run_ids"];
+        for run_id in run_ids {
+            run_node = run_node_map[run_id];
+            run_node.cluster_id = cluster["cluster_id"];
+            run_node +>: InCluster() :+> cluster_node;
+        }
+
+        for left_index=0 to left_index<len(run_ids) by left_index+=1 {
+            for right_index=left_index+1 to right_index<len(run_ids) by right_index+=1 {
+                left_id = run_ids[left_index];
+                right_id = run_ids[right_index];
+                score = similarity_score(record_map[left_id]["fingerprint"], record_map[right_id]["fingerprint"]);
+                if score <= 0.0 {
+                    continue;
+                }
+                run_node_map[left_id] +>: SimilarRun(score=score) :+> run_node_map[right_id];
+                run_node_map[right_id] +>: SimilarRun(score=score) :+> run_node_map[left_id];
+            }
+        }
+    }
+}
+
+def ensure_batch_graph(root_node: any, target_batch_id: str) -> dict[str, any] {
+    existing = find_batch_node(root_node, target_batch_id);
+    if existing is not None {
+        return {
+            "batch": existing,
+            "created": False,
+            "status": "existing_graph",
+        };
+    }
+
+    sample_name = target_batch_id.removeprefix("sample-");
+    batch_summary = sample_batch_summary(sample_name);
+    if batch_summary["status"] != "ready" {
+        return {
+            "batch": None,
+            "created": False,
+            "status": "missing",
+        };
+    }
+
+    root_node +>: HasBatch() :+> (batch := Batch(
+        batch_id=target_batch_id,
+        name=str(batch_summary["name"]),
+        source_format=str(batch_summary["source_format"]),
+        created_at=current_timestamp(),
+        run_count=int(batch_summary["run_count"]),
+    ));
+
+    file_nodes: dict[str, any] = {};
+    run_records: list[dict[str, any]] = [];
+    for (order, path) in enumerate(sample_batch_files(sample_name)) {
+        parsed_run = parse_run(path);
+        run_records.append(_create_run_node(batch, parsed_run, order, file_nodes));
+    }
+    _attach_clusters(batch, run_records, target_batch_id);
+    commit();
+    return {
+        "batch": batch,
+        "created": True,
+        "status": "compiled",
+    };
+}
+
+def run_graph_stats(run_node: Run) -> dict[str, any] {
+    steps = list_run_steps(run_node);
+    file_count = 0;
+    patch_count = 0;
+    test_count = 0;
+    error_count = 0;
+    artifact_edges = 0;
+    for step_node in steps {
+        step_files = list_step_files(step_node);
+        step_patches = list_step_patches(step_node);
+        step_tests = list_step_tests(step_node);
+        step_errors = list_step_errors(step_node);
+        file_count += len(step_files);
+        patch_count += len(step_patches);
+        test_count += len(step_tests);
+        error_count += len(step_errors);
+        artifact_edges += len(step_files) + len(step_patches) + len(step_tests) + len(step_errors);
+    }
+    return {
+        "status": "graph_compiled",
+        "node_counts": {
+            "Run": 1,
+            "Step": len(steps),
+            "FileArtifact": file_count,
+            "Patch": patch_count,
+            "TestEvent": test_count,
+            "ErrorEvent": error_count,
+            "FailureHypothesis": len(list_run_hypotheses(run_node)),
+        },
+        "edge_counts": {
+            "HasStep": len(steps),
+            "NextStep": max(len(steps) - 1, 0),
+            "ArtifactLinks": artifact_edges,
+            "SupportsHypothesis": len(list_run_hypotheses(run_node)),
+        },
+    };
+}

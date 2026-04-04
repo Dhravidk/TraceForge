@@ -1,5 +1,5 @@
 import from pathlib { Path }
-import from py.parser { parse_run }
+import from traceforge.parser { parse_run, path_run_stem }
 
 glob SAMPLE_ROOT: str = "demo_runs";
 
@@ -16,7 +16,7 @@ def sample_batch_files(name: str = "starter") -> list[str] {
 }
 
 def sample_file_run_id(path: str) -> str {
-    return Path(path).name.removesuffix(".traj.json");
+    return path_run_stem(path);
 }
 
 def sample_batch_summary(name: str = "starter") -> dict[str, any] {
@@ -30,7 +30,7 @@ def sample_batch_summary(name: str = "starter") -> dict[str, any] {
         "run_ids": run_ids,
         "sample_path": sample_batch_path(name),
         "status": ("ready") if files else ("missing"),
-        "next_step": "Use ParseBatch or GetRunView on one of the starter runs.",
+        "next_step": "Use ParseBatch or GetRunView on one of the sample runs.",
     };
 }
 
@@ -53,6 +53,8 @@ def parse_batch_summary(batch_id: str) -> dict[str, any] {
             parsed_runs.append(
                 {
                     "run_id": run.run_id,
+                    "instance_id": run.instance_id,
+                    "task_title": run.task_title,
                     "step_count": len(run.steps),
                     "turn_count": len(run.turns),
                     "source_path": run.source_path,
