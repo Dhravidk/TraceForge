@@ -1207,6 +1207,15 @@ def _evaluation_export_stem(batch_id: str, provider: str = "auto", model: str = 
     return stem;
 }
 
+def _run_item_detail(root_node: any, batch_id: str, run_item: dict[str, any], field_name: str) -> str {
+    direct_value = str(run_item.get(field_name) or "");
+    if direct_value {
+        return direct_value;
+    }
+    run_view = run_view_summary(root_node, str(run_item.get("run_id") or ""), batch_id);
+    return str(run_view.get(field_name) or "");
+}
+
 def _baseline_blind_spots(baseline: dict[str, any]) -> list[str] {
     blind_spots = [
         "The baseline sees raw trajectory text only and gets no graph cluster context.",
@@ -1517,7 +1526,7 @@ def export_blinded_eval_summary(
 
     for run_item in selected_items {
         run_id = str(run_item["run_id"]);
-        parsed_run = parse_run(str(run_item.get("source_path") or ""), run_id);
+        parsed_run = parse_run(_run_item_detail(root_node, batch_id, run_item, "source_path"), run_id);
         light_run_view = _lightweight_run_view(batch_id, run_item, parsed_run);
         comparison = _compare_from_run_view(run_id, batch_id, light_run_view, parsed_run, provider, model);
         comparisons.append(comparison);
@@ -1577,8 +1586,8 @@ def _gold_template_record(root_node: any, batch_id: str, run_item: dict[str, any
         "batch_id": batch_id,
         "run_id": str(run_item["run_id"]),
         "group": _run_group(run_item),
-        "task_title": str(run_item.get("task_title") or ""),
-        "source_path": str(run_item.get("source_path") or ""),
+        "task_title": _run_item_detail(root_node, batch_id, run_item, "task_title"),
+        "source_path": _run_item_detail(root_node, batch_id, run_item, "source_path"),
         "step_count": int(run_item.get("step_count") or 0),
         "annotation_instructions": "Annotate from the raw trajectory and visible run context only. Do not inspect model outputs while labeling.",
         "gold_failure_class": "",
