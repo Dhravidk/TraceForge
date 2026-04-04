@@ -116,6 +116,15 @@ test {
 }
 
 test {
+    result = root spawn DiagnoseCluster(cluster_id="sample-starter:premature_completion:0");
+    data = result.reports[0];
+    assert data["status"] == "deterministic_cluster_label";
+    assert data["label"] == "Premature completion";
+    assert data["llm_used"] == False;
+    assert "TraceForge cluster evidence pack" in data["evidence_pack"];
+}
+
+test {
     result = root spawn CompareBaseline(run_id="premature_completion");
     data = result.reports[0];
     assert data["status"] == "comparison_ready";

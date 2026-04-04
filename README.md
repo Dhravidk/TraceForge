@@ -26,6 +26,7 @@ This repo is now past the initial scaffold and running a graph-backed Jac demo p
 - credential-gated typed `by llm()` reasoning with deterministic fallback when no model key is present
 - Jac smoke tests for the starter demo path
 - a readable demo UI organized around batch overview, cluster explorer, run forensics, and baseline comparison
+- live cluster diagnosis and batch-report export surfaced directly in the Jac UI
 - stronger baseline-vs-structured comparison with explicit blind spots, support points, and evidence-window grounding
 - markdown batch report export that doubles as a demo and Devpost backup artifact
 

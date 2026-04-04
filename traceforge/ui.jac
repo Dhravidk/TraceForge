@@ -2,7 +2,9 @@ sv import from traceforge.api {
     AnalyzeBatch,
     CompareBaseline,
     CompileMemoryPatch,
+    DiagnoseCluster,
     DiagnoseRun,
+    ExportBatchReport,
     GetBatchCatalog,
     GetBatchOverview,
     GetClusterView,
@@ -16,6 +18,7 @@ cl {
         has loadingBatch: bool = False;
         has loadingRun: bool = False;
         has loadingCluster: bool = False;
+        has loadingReport: bool = False;
         has selectedBatchId: str = "";
         has selectedRunId: str = "";
         has selectedClusterId: str = "";
@@ -60,6 +63,13 @@ cl {
             "stored_in_graph": False,
             "stored_patch_id": "",
         };
+        has clusterDiagnosis: any = {
+            "label": "",
+            "summary": "",
+            "confidence": 0.0,
+            "llm_used": False,
+            "evidence_pack": "",
+        };
         has comparison: any = {
             "baseline": {
                 "diagnosis": "",
@@ -77,6 +87,13 @@ cl {
             "irreversible_because": "",
             "evidence": [],
             "confidence": 0.0,
+        };
+        has reportDetail: any = {
+            "status": "idle",
+            "path": "",
+            "preview": "",
+            "run_count": 0,
+            "cluster_count": 0,
         };
 
         async def load_run(runId: str, batchId: str = "") -> None {
@@ -119,6 +136,11 @@ cl {
                 clusterDetail = cluster_result.reports[0];
             }
 
+            cluster_diagnosis_result = root spawn DiagnoseCluster(cluster_id=clusterId);
+            if cluster_diagnosis_result.reports {
+                clusterDiagnosis = cluster_diagnosis_result.reports[0];
+            }
+
             patch_result = root spawn CompileMemoryPatch(cluster_id=clusterId);
             if patch_result.reports {
                 patchDetail = patch_result.reports[0];
@@ -126,6 +148,22 @@ cl {
 
             status = "Showing cluster " + clusterId + ".";
             loadingCluster = False;
+        }
+
+        async def export_batch_report(batchId: str) -> None {
+            if not batchId {
+                return;
+            }
+            loadingReport = True;
+            status = "Exporting report for " + batchId + "...";
+
+            report_result = root spawn ExportBatchReport(batch_id=batchId);
+            if report_result.reports {
+                reportDetail = report_result.reports[0];
+            }
+
+            status = "Exported report for " + batchId + ".";
+            loadingReport = False;
         }
 
         async def load_batch(batchId: str) -> None {
@@ -136,6 +174,13 @@ cl {
             selectedRunId = "";
             selectedClusterId = "";
             loadingBatch = True;
+            reportDetail = {
+                "status": "idle",
+                "path": "",
+                "preview": "",
+                "run_count": 0,
+                "cluster_count": 0,
+            };
             status = "Loading batch " + batchId + "...";
 
             analyze = root spawn AnalyzeBatch(batch_id=batchId);
@@ -196,6 +241,10 @@ cl {
         structuredWindow = comparison["structured"]["evidence_window"] || [];
         baselineBlindSpots = comparison["baseline"]["blind_spots"] || [];
         structuredSupportPoints = comparison["structured"]["support_points"] || [];
+        clusterDiagnosisMode = "Deterministic fallback";
+        if clusterDiagnosis["llm_used"] {
+            clusterDiagnosisMode = "Typed by llm()";
+        }
         activeBatch = {};
         for batch in catalogEntries {
             if String(batch["batch_id"]) == String(selectedBatchId) {
@@ -231,6 +280,12 @@ cl {
         if loadingBatch {
             batchStatusText = "Refreshing batch overview...";
         }
+        reportStatusText = "Report export idle.";
+        if loadingReport {
+            reportStatusText = "Exporting report...";
+        } elif reportDetail["status"] == "exported" {
+            reportStatusText = "Report ready at " + String(reportDetail["path"]);
+        }
 
         if loading {
             return <main className="shell">
@@ -265,6 +320,7 @@ cl {
                         <li>Jac-first demo path: graph-backed batch, cluster, run, diagnosis, patch, comparison, and report walkers.</li>
                         <li>Active batch: {activeBatchName} with {String(overview["run_count"])} runs and {String(overview["cluster_count"])} clusters.</li>
                         <li>Run diagnosis mode: {diagnosisMode}.</li>
+                        <li>Cluster diagnosis mode: {clusterDiagnosisMode}.</li>
                         <li>Patch synthesis mode: {patchMode}.</li>
                         <li>Stored cluster patches: {String(clusterDetail["stored_patch_count"] || 0)}.</li>
                     </ul>
@@ -277,7 +333,7 @@ cl {
                         <li>Open a recurring failure cluster and inspect the medoid and recurring signals.</li>
                         <li>Open a failed run and highlight the likely first irreversible step.</li>
                         <li>Compare raw compressed analysis against structured evidence-pack reasoning.</li>
-                        <li>Export the batch report or copy the generated AGENTS.md patch.</li>
+                        <li>Export the batch report and keep the markdown artifact as a demo fallback.</li>
                     </ol>
                 </article>
             </section>
@@ -350,6 +406,11 @@ cl {
                     <p>Cluster size: {String(clusterDetail["size"] || 0)}</p>
                     <p>Medoid run: {String(clusterDetail["medoid_run_id"] || "")}</p>
                     <p>Stored patches: {String(clusterDetail["stored_patch_count"] || 0)}</p>
+                    <h3>Cluster Diagnosis</h3>
+                    <p>{String(clusterDiagnosis["label"] || "")}</p>
+                    <p>{String(clusterDiagnosis["summary"] || "")}</p>
+                    <p>Confidence: {String(clusterDiagnosis["confidence"] || 0)}</p>
+                    <p>Diagnosis mode: {clusterDiagnosisMode}</p>
                     <h3>Recurring Signals</h3>
                     <ul>
                         {[<li>{String(item)}</li> for item in recurringSignals]}
@@ -474,6 +535,21 @@ cl {
                         <pre>{String(patchDetail["evidence_pack"] || "")}</pre>
                     </details>
                     <pre>{String(patchDetail["diff_text"] || "")}</pre>
+                </article>
+
+                <article className="panel">
+                    <h2>Submission Artifact: Batch Report</h2>
+                    <p>{reportStatusText}</p>
+                    <p>Export one markdown report per batch so the demo has a reliable fallback artifact outside the live UI.</p>
+                    <button onClick={lambda e: any -> None { export_batch_report(String(selectedBatchId)); }}>
+                        Export {String(selectedBatchId || "batch")} report
+                    </button>
+                    <p>Path: {String(reportDetail["path"] || "")}</p>
+                    <p>Runs: {String(reportDetail["run_count"] || 0)} | Clusters: {String(reportDetail["cluster_count"] || 0)}</p>
+                    <details>
+                        <summary>Report Preview</summary>
+                        <pre>{String(reportDetail["preview"] || "")}</pre>
+                    </details>
                 </article>
             </section>
 
