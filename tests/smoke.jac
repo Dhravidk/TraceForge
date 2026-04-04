@@ -59,6 +59,8 @@ test {
     assert data["status"] == "deterministic_diagnosis";
     assert data["failure_class"] == "PREMATURE_COMPLETION";
     assert data["critical_step_idx"] == 1;
+    assert data["llm_used"] == False;
+    assert "TraceForge run evidence pack" in data["evidence_pack"];
 }
 
 test {
@@ -67,6 +69,8 @@ test {
     assert data["status"] == "deterministic_patch";
     assert "rerun at least one targeted failing test" in data["diff_text"];
     assert data["stored_in_graph"] == True;
+    assert data["llm_used"] == False;
+    assert "TraceForge cluster evidence pack" in data["evidence_pack"];
 
     cluster_result = root spawn GetClusterView(cluster_id="sample-starter:premature_completion:0");
     cluster_data = cluster_result.reports[0];

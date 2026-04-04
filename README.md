@@ -22,6 +22,7 @@ This repo is now past the initial scaffold and running a graph-backed Jac demo p
 - graph compilation into `Batch`, `Run`, `Step`, artifact, hypothesis, and cluster nodes
 - graph-backed batch, run, cluster, diagnosis, patch, comparison, and report walkers
 - discovered batch catalog with switching between sample and local upload batches
+- credential-gated typed `by llm()` reasoning with deterministic fallback when no model key is present
 - Jac smoke tests for the starter demo path
 - a readable demo UI that loads live data from the starter batch
 
