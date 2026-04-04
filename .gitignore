@@ -12,5 +12,7 @@ node_modules/
 # Runtime/demo artifacts
 uploads/*
 !uploads/.gitkeep
+!uploads/local_demo_batch/
+!uploads/local_demo_batch/*.traj.json
 exports/*
 !exports/.gitkeep

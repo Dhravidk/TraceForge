@@ -16,6 +16,7 @@ import from traceforge.schema {
     PatchesFile,
     ProducesPatch,
     RaisesError,
+    MemoryPatch,
     Run,
     RunStatus,
     RunsTest,
@@ -23,11 +24,12 @@ import from traceforge.schema {
     SimilarRun,
     Step,
     StepKind,
+    SuggestsPatch,
     SupportsHypothesis,
     TestEvent,
     TouchesFile
 }
-import from traceforge.ingest { sample_batch_files, sample_batch_summary }
+import from traceforge.ingest { batch_files, batch_summary }
 import from traceforge.parser {
     ParsedRun,
     extract_file_tokens,
@@ -44,8 +46,14 @@ import from traceforge.features {
 import from traceforge.clustering { build_clusters, similarity_score }
 import from traceforge.critical { localize_critical_step }
 
+glob GENERATED_PATCH_REGISTRY: dict[str, list[str]] = {};
+
 def current_timestamp() -> str {
     return datetime.utcnow().isoformat();
+}
+
+def remembered_cluster_patch_ids(cluster_id: str) -> list[str] {
+    return GENERATED_PATCH_REGISTRY.get(cluster_id, []);
 }
 
 def failure_class_to_enum(label: str) -> FailureClass {
@@ -235,6 +243,13 @@ def list_batch_clusters(batch: Batch) -> list[Cluster] {
     return sorted(clusters, key=lambda item: any -> any : item.cluster_id);
 }
 
+def list_cluster_patches(cluster_node: Cluster) -> list[MemoryPatch] {
+    return sorted(
+        [cluster_node ->:SuggestsPatch:->][?:MemoryPatch],
+        key=lambda item: any -> any : item.patch_id,
+    );
+}
+
 def find_batch_node(root_node: any, target_batch_id: str) -> any {
     batches = [root_node ->:HasBatch:->][?:Batch, batch_id == target_batch_id];
     if batches {
@@ -270,6 +285,56 @@ def find_cluster_node(batch: Batch, target_cluster_id: str) -> any {
         }
     }
     return None;
+}
+
+def upsert_cluster_patch(cluster_node: Cluster, patch_data: dict[str, any]) -> dict[str, any] {
+    stable_patch_id = str(patch_data.get("patch_id") or (cluster_node.cluster_id + ":memory_patch"));
+    existing = None;
+    for patch_node in list_cluster_patches(cluster_node) {
+        if patch_node.patch_id == stable_patch_id {
+            existing = patch_node;
+            break;
+        }
+    }
+
+    if existing is None {
+        cluster_node +>: SuggestsPatch(weight=float(patch_data.get("confidence") or 0.0)) :+> (
+            patch_node := MemoryPatch(
+                patch_id=stable_patch_id,
+                scope=str(patch_data.get("scope") or "cluster"),
+                title=str(patch_data.get("title") or cluster_node.label),
+                diff_text=str(patch_data.get("diff_text") or ""),
+                confidence=float(patch_data.get("confidence") or 0.0),
+            )
+        );
+        if cluster_node.cluster_id not in GENERATED_PATCH_REGISTRY {
+            GENERATED_PATCH_REGISTRY[cluster_node.cluster_id] = [];
+        }
+        if stable_patch_id not in GENERATED_PATCH_REGISTRY[cluster_node.cluster_id] {
+            GENERATED_PATCH_REGISTRY[cluster_node.cluster_id].append(stable_patch_id);
+        }
+        commit();
+        return {
+            "patch_id": patch_node.patch_id,
+            "created": True,
+        };
+    }
+
+    existing.scope = str(patch_data.get("scope") or existing.scope);
+    existing.title = str(patch_data.get("title") or existing.title);
+    existing.diff_text = str(patch_data.get("diff_text") or existing.diff_text);
+    existing.confidence = float(patch_data.get("confidence") or existing.confidence);
+    if cluster_node.cluster_id not in GENERATED_PATCH_REGISTRY {
+        GENERATED_PATCH_REGISTRY[cluster_node.cluster_id] = [];
+    }
+    if stable_patch_id not in GENERATED_PATCH_REGISTRY[cluster_node.cluster_id] {
+        GENERATED_PATCH_REGISTRY[cluster_node.cluster_id].append(stable_patch_id);
+    }
+    commit();
+    return {
+        "patch_id": existing.patch_id,
+        "created": False,
+    };
 }
 
 def _file_node(path: str, file_nodes: dict[str, any]) -> any {
@@ -458,9 +523,8 @@ def ensure_batch_graph(root_node: any, target_batch_id: str) -> dict[str, any] {
         };
     }
 
-    sample_name = target_batch_id.removeprefix("sample-");
-    batch_summary = sample_batch_summary(sample_name);
-    if batch_summary["status"] != "ready" {
+    batch_meta = batch_summary(target_batch_id);
+    if batch_meta["status"] != "ready" {
         return {
             "batch": None,
             "created": False,
@@ -470,15 +534,15 @@ def ensure_batch_graph(root_node: any, target_batch_id: str) -> dict[str, any] {
 
     root_node +>: HasBatch() :+> (batch := Batch(
         batch_id=target_batch_id,
-        name=str(batch_summary["name"]),
-        source_format=str(batch_summary["source_format"]),
+        name=str(batch_meta["name"]),
+        source_format=str(batch_meta["source_format"]),
         created_at=current_timestamp(),
-        run_count=int(batch_summary["run_count"]),
+        run_count=int(batch_meta["run_count"]),
     ));
 
     file_nodes: dict[str, any] = {};
     run_records: list[dict[str, any]] = [];
-    for (order, path) in enumerate(sample_batch_files(sample_name)) {
+    for (order, path) in enumerate(batch_files(target_batch_id)) {
         parsed_run = parse_run(path);
         run_records.append(_create_run_node(batch, parsed_run, order, file_nodes));
     }

@@ -1,5 +1,6 @@
 import from traceforge.__init__ { project_identity }
 import from traceforge.ingest {
+    batch_catalog_summary,
     parse_batch_summary,
     sample_batch_summary,
     upload_batch_summary
@@ -22,8 +23,8 @@ walker :pub GetStatus {
     can get with Root entry {
         report {
             "project": project_identity(),
-            "phase": "phase_3_demo_ui_slice",
-            "message": "TraceForge now ships a Jac-only graph-backed starter demo with batch, run, cluster, diagnosis, patch, comparison, report, and demo UI views.",
+            "phase": "phase_6_submission_packet_ready",
+            "message": "TraceForge now ships a Jac-only graph-backed demo with a submission-ready flow: batch overview, cluster explorer, run forensics, baseline comparison, cluster diagnosis, and markdown report export.",
         };
     }
 }
@@ -33,6 +34,12 @@ walker :pub UploadBatch {
 
     can run with Root entry {
         report upload_batch_summary(self.filename);
+    }
+}
+
+walker :pub GetBatchCatalog {
+    can run with Root entry {
+        report batch_catalog_summary();
     }
 }
 
@@ -78,17 +85,19 @@ walker :pub GetClusterView {
 
 walker :pub GetRunView {
     has run_id: str;
+    has batch_id: str = "";
 
     can run with Root entry {
-        report run_view_summary(root, self.run_id);
+        report run_view_summary(root, self.run_id, self.batch_id);
     }
 }
 
 walker :pub DiagnoseRun {
     has run_id: str;
+    has batch_id: str = "";
 
     can run with Root entry {
-        report diagnose_run_summary(root, self.run_id);
+        report diagnose_run_summary(root, self.run_id, self.batch_id);
     }
 }
 
@@ -118,8 +127,9 @@ walker :pub ExportBatchReport {
 
 walker :pub CompareBaseline {
     has run_id: str;
+    has batch_id: str = "";
 
     can run with Root entry {
-        report compare_baseline_summary(root, self.run_id);
+        report compare_baseline_summary(root, self.run_id, self.batch_id);
     }
 }

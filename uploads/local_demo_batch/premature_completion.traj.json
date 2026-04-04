@@ -1,0 +1,36 @@
+{
+  "run_id": "premature_completion",
+  "instance_id": "demo-001",
+  "task_title": "Fix the parser test for missing metadata",
+  "metadata": {
+    "model": "starter-model",
+    "status": "failed"
+  },
+  "trajectory": [
+    {
+      "role": "assistant",
+      "content": "I will inspect the failing parser test first."
+    },
+    {
+      "role": "tool",
+      "content": "pytest tests/test_parser.py -q\nFAILED tests/test_parser.py::test_metadata_roundtrip"
+    },
+    {
+      "role": "assistant",
+      "content": "I found the likely issue in parser.py and will patch it quickly."
+    },
+    {
+      "role": "tool",
+      "content": "apply_patch <<'PATCH'\n*** Update File: parser.py\n- old branch\n+ new branch\nPATCH"
+    },
+    {
+      "role": "assistant",
+      "content": "The fix looks fine. I will submit now without rerunning tests."
+    },
+    {
+      "role": "tool",
+      "content": "submit final answer"
+    }
+  ]
+}
+
