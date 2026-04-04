@@ -121,6 +121,11 @@ test {
     assert data["status"] == "comparison_ready";
     assert data["structured"]["critical_step_idx"] == 1;
     assert data["structured"]["failure_class"] == "PREMATURE_COMPLETION";
+    assert data["baseline"]["specificity"] == "low";
+    assert data["structured"]["specificity"] == "high";
+    assert data["delta"]["critical_step_localized"] == True;
+    assert len(data["baseline"]["blind_spots"]) >= 3;
+    assert len(data["structured"]["support_points"]) >= 3;
 }
 
 test {

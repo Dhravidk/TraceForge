@@ -194,10 +194,25 @@ def export_report_summary(root_node: any, batch_id: str) -> dict[str, any] {
         lines.append("- Raw baseline diagnosis:");
         lines.append(f"  - {comparison['baseline']['diagnosis']}");
         lines.append(f"  - Specificity: {comparison['baseline']['specificity']}");
+        lines.append(f"  - Estimated input size: {comparison['baseline']['pack_token_estimate']} tokens");
+        if comparison["baseline"]["blind_spots"] {
+            lines.append("  - Blind spots:");
+            for item in comparison["baseline"]["blind_spots"] {
+                lines.append(f"    - {item}");
+            }
+        }
         lines.append("- Structured diagnosis:");
         lines.append(f"  - Failure class: {comparison['structured']['failure_class']}");
         lines.append(f"  - Critical step: {comparison['structured']['critical_step_idx']}");
+        lines.append(f"  - Specificity: {comparison['structured']['specificity']}");
+        lines.append(f"  - Estimated input size: {comparison['structured']['pack_token_estimate']} tokens");
         lines.append(f"  - Why better: {comparison['structured']['why_better']}");
+        if comparison["structured"]["support_points"] {
+            lines.append("  - Support points:");
+            for item in comparison["structured"]["support_points"] {
+                lines.append(f"    - {item}");
+            }
+        }
         if comparison["structured"]["evidence_window"] {
             lines.append("  - Evidence window:");
             for step in comparison["structured"]["evidence_window"] {

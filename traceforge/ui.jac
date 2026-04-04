@@ -194,6 +194,8 @@ cl {
         recurringTests = clusterDetail["recurring_tests"] || [];
         patchRules = patchDetail["rules"] || [];
         structuredWindow = comparison["structured"]["evidence_window"] || [];
+        baselineBlindSpots = comparison["baseline"]["blind_spots"] || [];
+        structuredSupportPoints = comparison["structured"]["support_points"] || [];
         activeBatch = {};
         for batch in catalogEntries {
             if String(batch["batch_id"]) == String(selectedBatchId) {
@@ -481,6 +483,11 @@ cl {
                     <h3>Raw Baseline</h3>
                     <p>{String(comparison["baseline"]["diagnosis"] || "")}</p>
                     <p>Specificity: {String(comparison["baseline"]["specificity"] || "")}</p>
+                    <p>Estimated input size: {String(comparison["baseline"]["pack_token_estimate"] || 0)} tokens</p>
+                    <h3>Blind Spots</h3>
+                    <ul>
+                        {[<li>{String(item)}</li> for item in baselineBlindSpots]}
+                    </ul>
                     <pre>{String(comparison["baseline"]["compressed_trajectory"] || "")}</pre>
                 </article>
 
@@ -488,7 +495,13 @@ cl {
                     <h2>Screen 4: Structured Diagnosis</h2>
                     <p>Failure class: {String(comparison["structured"]["failure_class"] || "UNKNOWN")}</p>
                     <p>Critical step: {String(comparison["structured"]["critical_step_idx"] || -1)}</p>
+                    <p>Specificity: {String(comparison["structured"]["specificity"] || "")}</p>
+                    <p>Estimated input size: {String(comparison["structured"]["pack_token_estimate"] || 0)} tokens</p>
                     <p>{String(comparison["structured"]["why_better"] || "")}</p>
+                    <h3>Support Points</h3>
+                    <ul>
+                        {[<li>{String(item)}</li> for item in structuredSupportPoints]}
+                    </ul>
                     <ol>
                         {[
                             <li>
