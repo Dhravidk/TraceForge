@@ -30,9 +30,11 @@ This repo is now running a submission-ready Jac demo path for sample and local u
 - live cluster diagnosis and batch-report export surfaced directly in the Jac UI
 - fair same-schema raw-transcript-vs-TraceForge comparison with explicit blind spots, support points, verifier output, and evidence-window grounding
 - blinded evaluation export for side-by-side judging of raw transcript analysis versus TraceForge retrieval
+- gold annotation template export for a manually labeled evaluation subset
+- rigorous batch evaluation export with provider-aware Anthropic/OpenAI API support and gold-score uplift summaries
 - markdown batch report export that doubles as a demo and Devpost backup artifact
 
-The remaining major work is deeper typed `by llm()` synthesis and any last-mile demo recording polish. The current repo already supports the full judge-facing path: batch overview, cluster explorer, run forensics, baseline comparison, cluster diagnosis, and markdown report export.
+The remaining major work is deeper typed `by llm()` synthesis and any last-mile demo recording polish. The current repo already supports the full judge-facing path: batch overview, cluster explorer, run forensics, fair baseline comparison, blinded evaluation export, gold annotation template export, rigorous uplift scoring, cluster diagnosis, and markdown report export.
 
 ## Repo Layout
 
@@ -114,7 +116,47 @@ jac enter main.jac GetClusterView sample-starter:premature_completion:0
 jac enter main.jac CompileMemoryPatch sample-starter:premature_completion:0
 jac enter main.jac CompareBaseline premature_completion
 jac enter main.jac ExportBlindedEvaluation sample-starter --limit 2
+jac enter main.jac ExportGoldAnnotationTemplate sample-starter --substantive_limit 2 --startup_limit 0
+jac enter main.jac RunRigorousEvaluation sample-starter --substantive_limit 2 --startup_limit 0
 jac enter main.jac ExportBatchReport sample-starter
+```
+
+If you want model-backed evaluation instead of deterministic fallback, set one provider key plus a model name before running the eval walkers:
+
+```bash
+export OPENAI_API_KEY=...
+export TRACEFORGE_OPENAI_MODEL=gpt-5.4
+
+# or
+
+export ANTHROPIC_API_KEY=...
+export TRACEFORGE_ANTHROPIC_MODEL=claude-sonnet-4-20250514
+```
+
+For a local Codex CLI preliminary evaluation that uses the machine's logged-in Codex account instead of API keys:
+
+```bash
+export TRACEFORGE_CODEX_MODEL=gpt-5.4
+```
+
+Then run the same walkers with an explicit provider if you want to lock the evaluation:
+
+```bash
+jac enter main.jac CompareBaseline premature_completion --batch_id sample-starter --provider openai
+jac enter main.jac ExportBlindedEvaluation sample-starter --limit 10 --provider anthropic
+jac enter main.jac RunRigorousEvaluation sample-starter --provider openai --substantive_limit 20 --startup_limit 5
+jac enter main.jac CompareBaseline premature_completion sample-starter codex
+jac enter main.jac RunRigorousEvaluation sample-starter codex gpt-5.4 20 5 exports/evals/sample-starter_gold_template.json
+```
+
+Explicit provider runs now namespace their eval artifacts so deterministic, API, and Codex outputs can coexist. For example, a Codex run writes files such as `sample-starter_codex_gpt_5_4_comparison.json` instead of overwriting `sample-starter_comparison.json`.
+
+After exporting the gold worksheet and filling it in, score the evaluation against the labeled subset:
+
+```bash
+jac enter main.jac ScoreRigorousEvaluation \
+  --comparison_json_path exports/evals/sample-starter_comparison.json \
+  --annotation_path exports/evals/sample-starter_gold_template.json
 ```
 
 Local upload batches are discovered from folders under [uploads](/home/gb10/Projects/JacHacks/uploads) that contain `*.traj.json` files, or from zip archives that get extracted into a top-level upload batch directory. The repo includes [local_demo_batch](/home/gb10/Projects/JacHacks/uploads/local_demo_batch) as a fixture for the folder path, and the smoke suite generates a zip fixture at runtime for the archive path.

@@ -1,15 +1,19 @@
 import json;
+import from os { getenv }
 import from pathlib { Path }
+import from shutil { which, rmtree }
+import from subprocess { run }
+import from tempfile { mkdtemp }
+import from time { perf_counter }
+import from urllib.error { HTTPError, URLError }
+import from urllib.request { Request, urlopen }
 import from traceforge.analysis { batch_overview_summary, run_view_summary }
 import from traceforge.critical { localize_critical_step }
 import from traceforge.features { compute_run_fingerprint, dominant_failure_label }
 import from traceforge.graph_build { failure_class_name }
 import from traceforge.llm_ops {
     cluster_rule_lines,
-    compare_run_diagnoses,
     diagnosis_reason,
-    llm_enabled,
-    propose_run_diagnosis
 }
 import from traceforge.parser { hash_text, parse_run, step_text, truncate_text }
 
@@ -54,6 +58,538 @@ def _normalize_failure_class(name: str) -> str {
     return "UNKNOWN";
 }
 
+def _coerce_int(value: any, fallback: int = 0) -> int {
+    if value is None or value == "" {
+        return fallback;
+    }
+    return int(value);
+}
+
+def _slugify_label(text: str) -> str {
+    cleaned = str(text or "").lower();
+    output = "";
+    for char in cleaned {
+        if char.isalnum() {
+            output += char;
+        } elif char in {"-", "_", "."} {
+            output += "_";
+        }
+    }
+    while "__" in output {
+        output = output.replace("__", "_");
+    }
+    return output.strip("_");
+}
+
+def _trim_json_fence(text: str) -> str {
+    cleaned = str(text or "").strip();
+    if cleaned.startswith("```json") {
+        cleaned = cleaned.removeprefix("```json").strip();
+    } elif cleaned.startswith("```") {
+        cleaned = cleaned.removeprefix("```").strip();
+    }
+    if cleaned.endswith("```") {
+        cleaned = cleaned.removesuffix("```").strip();
+    }
+    return cleaned;
+}
+
+def _extract_json_object(text: str) -> dict[str, any] {
+    cleaned = _trim_json_fence(text);
+    try {
+        parsed = json.loads(cleaned);
+        if isinstance(parsed, dict) {
+            return parsed;
+        }
+    } except Exception {
+    }
+
+    start = cleaned.find("{");
+    stop = cleaned.rfind("}");
+    if start >= 0 and stop > start {
+        snippet = cleaned[start: stop + 1];
+        parsed = json.loads(snippet);
+        if isinstance(parsed, dict) {
+            return parsed;
+        }
+    }
+    raise ValueError("model response did not contain a JSON object");
+}
+
+def _shared_run_diagnosis_instruction() -> str {
+    lines: list[str] = [];
+    lines.append("You are diagnosing a coding-agent trajectory.");
+    lines.append("Return JSON only.");
+    lines.append("Use only the evidence provided.");
+    lines.append("Do not invent missing steps, files, tests, or outcomes.");
+    lines.append("Choose the earliest plausible irreversible mistake.");
+    lines.append("When the pack shows canonical decision steps, use those 0-based step_idx values in critical_step_idx and evidence_refs.");
+    lines.append("Schema:");
+    lines.append(
+        json.dumps(
+            {
+                "failure_class": "PREMATURE_COMPLETION|INVALID_PATCH|WRONG_FILE_FOCUS|OSCILLATION_LOOP|TOOL_MISUSE|STALE_CONTEXT_OR_BAD_PLAN|REQUIREMENT_DRIFT|UNKNOWN",
+                "critical_step_idx": 0,
+                "evidence_refs": [{"step_idx": 0, "artifact": "phase", "quote": "exact quote"}],
+                "irreversible_because": "one sentence",
+                "memory_rule": "one operational rule",
+                "confidence": 0.0,
+            },
+            indent=2,
+        )
+    );
+    return "\n".join(lines);
+}
+
+def _shared_verdict_instruction() -> str {
+    lines: list[str] = [];
+    lines.append("You are a blinded evaluator comparing two trajectory diagnoses.");
+    lines.append("Return JSON only.");
+    lines.append("Judge evidence validity, pivot quality, specificity, actionability, and hallucination avoidance.");
+    lines.append("Winner must be A, B, or tie.");
+    lines.append(
+        json.dumps(
+            {
+                "winner": "A|B|tie",
+                "raw_score": 0.0,
+                "structured_score": 0.0,
+                "evidence_validity_winner": "A|B|tie",
+                "pivot_quality_winner": "A|B|tie",
+                "specificity_winner": "A|B|tie",
+                "actionability_winner": "A|B|tie",
+                "hallucination_winner": "A|B|tie",
+                "rationale": "short explanation",
+            },
+            indent=2,
+        )
+    );
+    return "\n".join(lines);
+}
+
+def _diagnosis_output_schema() -> dict[str, any] {
+    return {
+        "type": "object",
+        "properties": {
+            "failure_class": {
+                "type": "string",
+                "enum": [
+                    "PREMATURE_COMPLETION",
+                    "INVALID_PATCH",
+                    "WRONG_FILE_FOCUS",
+                    "OSCILLATION_LOOP",
+                    "TOOL_MISUSE",
+                    "STALE_CONTEXT_OR_BAD_PLAN",
+                    "REQUIREMENT_DRIFT",
+                    "UNKNOWN",
+                ],
+            },
+            "critical_step_idx": {"type": "integer"},
+            "evidence_refs": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "step_idx": {"type": "integer"},
+                        "artifact": {"type": "string"},
+                        "quote": {"type": "string"},
+                    },
+                    "required": ["step_idx", "artifact", "quote"],
+                    "additionalProperties": False,
+                },
+            },
+            "irreversible_because": {"type": "string"},
+            "memory_rule": {"type": "string"},
+            "confidence": {"type": "number"},
+        },
+        "required": [
+            "failure_class",
+            "critical_step_idx",
+            "evidence_refs",
+            "irreversible_because",
+            "memory_rule",
+            "confidence",
+        ],
+        "additionalProperties": False,
+    };
+}
+
+def _verdict_output_schema() -> dict[str, any] {
+    return {
+        "type": "object",
+        "properties": {
+            "winner": {"type": "string", "enum": ["A", "B", "tie"]},
+            "raw_score": {"type": "number"},
+            "structured_score": {"type": "number"},
+            "evidence_validity_winner": {"type": "string", "enum": ["A", "B", "tie"]},
+            "pivot_quality_winner": {"type": "string", "enum": ["A", "B", "tie"]},
+            "specificity_winner": {"type": "string", "enum": ["A", "B", "tie"]},
+            "actionability_winner": {"type": "string", "enum": ["A", "B", "tie"]},
+            "hallucination_winner": {"type": "string", "enum": ["A", "B", "tie"]},
+            "rationale": {"type": "string"},
+        },
+        "required": [
+            "winner",
+            "raw_score",
+            "structured_score",
+            "evidence_validity_winner",
+            "pivot_quality_winner",
+            "specificity_winner",
+            "actionability_winner",
+            "hallucination_winner",
+            "rationale",
+        ],
+        "additionalProperties": False,
+    };
+}
+
+def _codex_cli_path() -> str {
+    configured = str(getenv("TRACEFORGE_CODEX_CLI") or "");
+    if configured {
+        return configured;
+    }
+    discovered = which("codex");
+    if discovered is None {
+        return "";
+    }
+    return str(discovered);
+}
+
+def _provider_key(provider: str) -> str {
+    if provider == "openai" {
+        return str(getenv("OPENAI_API_KEY") or "");
+    }
+    if provider == "anthropic" {
+        return str(getenv("ANTHROPIC_API_KEY") or "");
+    }
+    return "";
+}
+
+def _provider_model(provider: str, model: str = "") -> str {
+    if model {
+        return model;
+    }
+    if provider == "openai" {
+        return str(getenv("TRACEFORGE_OPENAI_MODEL") or getenv("OPENAI_MODEL") or "");
+    }
+    if provider == "anthropic" {
+        return str(getenv("TRACEFORGE_ANTHROPIC_MODEL") or getenv("ANTHROPIC_MODEL") or "");
+    }
+    if provider == "codex" {
+        return str(getenv("TRACEFORGE_CODEX_MODEL") or getenv("CODEX_MODEL") or "gpt-5.4");
+    }
+    return "";
+}
+
+def _resolve_provider(provider: str = "auto", model: str = "") -> dict[str, any] {
+    preferred = str(provider or "auto").lower();
+    if preferred in {"openai", "anthropic", "codex"} {
+        resolved_model = _provider_model(preferred, model);
+        available = False;
+        if preferred == "codex" {
+            available = bool(_codex_cli_path());
+        } else {
+            available = bool(_provider_key(preferred) and resolved_model);
+        }
+        return {
+            "provider": preferred,
+            "model": resolved_model,
+            "available": available,
+        };
+    }
+
+    for candidate in ["openai", "anthropic"] {
+        resolved_model = _provider_model(candidate, "");
+        if _provider_key(candidate) and resolved_model {
+            return {
+                "provider": candidate,
+                "model": resolved_model,
+                "available": True,
+            };
+        }
+    }
+    return {
+        "provider": "",
+        "model": "",
+        "available": False,
+    };
+}
+
+def _codex_exec_prompt(system_prompt: str, user_prompt: str) -> str {
+    lines: list[str] = [];
+    lines.append("You are being used as an offline evaluator, not as a coding agent.");
+    lines.append("Do not run commands, inspect files, or use tools.");
+    lines.append("Answer only from the evidence in this prompt.");
+    lines.append("");
+    lines.append("Evaluator instructions:");
+    lines.append(system_prompt);
+    lines.append("");
+    lines.append("Evidence:");
+    lines.append(user_prompt);
+    return "\n".join(lines);
+}
+
+def _codex_completion(system_prompt: str, user_prompt: str, model: str, schema: dict[str, any]) -> dict[str, any] {
+    codex_path = _codex_cli_path();
+    if not codex_path {
+        raise RuntimeError("Codex CLI is not available on PATH.");
+    }
+
+    temp_root = Path(mkdtemp(prefix="traceforge_codex_eval_"));
+    schema_path = temp_root.joinpath("schema.json");
+    output_path = temp_root.joinpath("last_message.json");
+    schema_path.write_text(json.dumps(schema, indent=2) + "\n", encoding="utf-8");
+    prompt_text = _codex_exec_prompt(system_prompt, user_prompt);
+    command = [
+        codex_path,
+        "exec",
+        "--skip-git-repo-check",
+        "--ephemeral",
+        "--dangerously-bypass-approvals-and-sandbox",
+        "--color",
+        "never",
+        "--output-schema",
+        str(schema_path),
+        "--output-last-message",
+        str(output_path),
+        "-C",
+        str(temp_root),
+    ];
+    if model {
+        command.extend(["-m", model]);
+    }
+    command.append("-");
+
+    start = perf_counter();
+    try {
+        result = run(
+            command,
+            input=prompt_text,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=300,
+        );
+        latency_ms = round((perf_counter() - start) * 1000.0, 2);
+        if result.returncode != 0 {
+            raise RuntimeError(
+                "Codex CLI failed: "
+                + truncate_text((result.stderr or result.stdout or "").strip(), 1200)
+            );
+        }
+        if not output_path.exists() {
+            raise RuntimeError("Codex CLI did not write an output message.");
+        }
+        text = output_path.read_text(encoding="utf-8").strip();
+        completion_tokens = _pack_token_estimate(text);
+        prompt_tokens = _pack_token_estimate(prompt_text);
+        return {
+            "text": text,
+            "usage": {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": prompt_tokens + completion_tokens,
+            },
+            "latency_ms": latency_ms,
+            "provider": "codex",
+            "model": model,
+        };
+    } finally {
+        rmtree(temp_root, ignore_errors=True);
+    }
+}
+
+def _http_post_json(url: str, headers: dict[str, str], payload: dict[str, any]) -> dict[str, any] {
+    request = Request(
+        url=url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers=headers,
+        method="POST",
+    );
+    start = perf_counter();
+    try {
+        response = urlopen(request);
+        body_text = response.read().decode("utf-8");
+        latency_ms = round((perf_counter() - start) * 1000.0, 2);
+        return {
+            "status": int(response.status),
+            "body": json.loads(body_text),
+            "latency_ms": latency_ms,
+        };
+    } except HTTPError as err {
+        body_text = err.read().decode("utf-8");
+        raise RuntimeError("HTTP " + str(err.code) + ": " + body_text);
+    } except URLError as err {
+        raise RuntimeError("Network error: " + str(err.reason));
+    }
+}
+
+def _openai_completion(system_prompt: str, user_prompt: str, model: str) -> dict[str, any] {
+    headers = {
+        "Authorization": "Bearer " + _provider_key("openai"),
+        "Content-Type": "application/json",
+    };
+    payload = {
+        "model": model,
+        "temperature": 0.0,
+        "max_completion_tokens": 900,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+    };
+    response = _http_post_json("https://api.openai.com/v1/chat/completions", headers, payload);
+    body = response["body"];
+    choice = body.get("choices", [])[0];
+    message = choice.get("message", {});
+    content = str(message.get("content") or "");
+    usage = body.get("usage", {});
+    return {
+        "text": content,
+        "usage": {
+            "prompt_tokens": int(usage.get("prompt_tokens") or 0),
+            "completion_tokens": int(usage.get("completion_tokens") or 0),
+            "total_tokens": int(usage.get("total_tokens") or 0),
+        },
+        "latency_ms": response["latency_ms"],
+        "provider": "openai",
+        "model": model,
+    };
+}
+
+def _anthropic_completion(system_prompt: str, user_prompt: str, model: str) -> dict[str, any] {
+    headers = {
+        "x-api-key": _provider_key("anthropic"),
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+    };
+    payload = {
+        "model": model,
+        "system": system_prompt,
+        "temperature": 0.0,
+        "max_tokens": 900,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": user_prompt,
+                    }
+                ],
+            }
+        ],
+    };
+    response = _http_post_json("https://api.anthropic.com/v1/messages", headers, payload);
+    body = response["body"];
+    content_text = "";
+    for block in body.get("content", []) {
+        if str(block.get("type") or "") == "text" {
+            content_text += str(block.get("text") or "");
+        }
+    }
+    usage = body.get("usage", {});
+    input_tokens = int(usage.get("input_tokens") or 0);
+    output_tokens = int(usage.get("output_tokens") or 0);
+    return {
+        "text": content_text,
+        "usage": {
+            "prompt_tokens": input_tokens,
+            "completion_tokens": output_tokens,
+            "total_tokens": input_tokens + output_tokens,
+        },
+        "latency_ms": response["latency_ms"],
+        "provider": "anthropic",
+        "model": model,
+    };
+}
+
+def _provider_completion(provider: str, model: str, system_prompt: str, user_prompt: str) -> dict[str, any] {
+    if provider == "openai" {
+        return _openai_completion(system_prompt, user_prompt, model);
+    }
+    if provider == "anthropic" {
+        return _anthropic_completion(system_prompt, user_prompt, model);
+    }
+    raise RuntimeError("Unsupported provider: " + provider);
+}
+
+def _diagnosis_from_json(run_id: str, parsed: dict[str, any], pack_mode: str, prompt_pack: str, provider: str, model: str, latency_ms: float, usage: dict[str, any]) -> dict[str, any] {
+    evidence = [];
+    raw_evidence = parsed.get("evidence_refs") or parsed.get("evidence") or [];
+    if isinstance(raw_evidence, list) {
+        for item in raw_evidence {
+            if not isinstance(item, dict) {
+                continue;
+            }
+            evidence.append(
+                {
+                    "step_idx": _coerce_int(item.get("step_idx"), -1),
+                    "artifact": str(item.get("artifact") or ""),
+                    "quote": str(item.get("quote") or ""),
+                }
+            );
+        }
+    }
+    return {
+        "run_id": run_id,
+        "mode": pack_mode,
+        "failure_class": _normalize_failure_class(str(parsed.get("failure_class") or "UNKNOWN")),
+        "critical_step_idx": _coerce_int(parsed.get("critical_step_idx"), -1),
+        "irreversible_because": str(parsed.get("irreversible_because") or ""),
+        "evidence": evidence,
+        "evidence_refs": evidence,
+        "confidence": float(parsed.get("confidence") or 0.0),
+        "memory_rule": str(parsed.get("memory_rule") or ""),
+        "llm_used": True,
+        "status": "provider_api_diagnosis",
+        "prompt_pack": prompt_pack,
+        "pack_token_estimate": _pack_token_estimate(prompt_pack),
+        "specificity": _specificity_label(len(evidence), _coerce_int(parsed.get("critical_step_idx"), -1), pack_mode),
+        "provider": provider,
+        "model": model,
+        "latency_ms": latency_ms,
+        "usage": usage,
+        "raw_model_text": json.dumps(parsed, indent=2),
+    };
+}
+
+def _verdict_from_json(parsed: dict[str, any], assignment: dict[str, str], provider: str, model: str, verifier_pack: str, latency_ms: float, usage: dict[str, any]) -> dict[str, any] {
+    winner = str(parsed.get("winner") or "tie").lower();
+    if winner == "a" {
+        winner = assignment["A"];
+    } elif winner == "b" {
+        winner = assignment["B"];
+    } elif winner not in {"baseline", "structured", "tie"} {
+        winner = "tie";
+    }
+    blinded_winner = "tie";
+    if winner == "baseline" {
+        blinded_winner = "A" if assignment["A"] == "baseline" else "B";
+    } elif winner == "structured" {
+        blinded_winner = "A" if assignment["A"] == "structured" else "B";
+    }
+    return {
+        "winner": winner,
+        "blinded_winner": blinded_winner,
+        "raw_score": float(parsed.get("raw_score") or 0.0),
+        "structured_score": float(parsed.get("structured_score") or 0.0),
+        "evidence_validity_winner": str(parsed.get("evidence_validity_winner") or "tie"),
+        "pivot_quality_winner": str(parsed.get("pivot_quality_winner") or "tie"),
+        "specificity_winner": str(parsed.get("specificity_winner") or "tie"),
+        "actionability_winner": str(parsed.get("actionability_winner") or "tie"),
+        "hallucination_winner": str(parsed.get("hallucination_winner") or "tie"),
+        "rationale": str(parsed.get("rationale") or ""),
+        "llm_used": True,
+        "status": "provider_api_verdict",
+        "verifier_pack": verifier_pack,
+        "provider": provider,
+        "model": model,
+        "latency_ms": latency_ms,
+        "usage": usage,
+        "raw_model_text": json.dumps(parsed, indent=2),
+    };
+}
+
 def _raw_turn_lines(parsed_run: any, max_turns: int = 120) -> list[str] {
     lines: list[str] = [];
     shown_turns = parsed_run.turns[: max_turns];
@@ -75,6 +611,29 @@ def _raw_turn_lines(parsed_run: any, max_turns: int = 120) -> list[str] {
             "... "
             + str(len(parsed_run.turns) - len(shown_turns))
             + " additional turns omitted from this raw prompt pack."
+        );
+    }
+    return lines;
+}
+
+def _decision_step_lines(parsed_run: any, max_steps: int = 80) -> list[str] {
+    lines: list[str] = [];
+    shown_steps = parsed_run.steps[: max_steps];
+    for step in shown_steps {
+        lines.append(
+            "Step "
+            + str(step.index)
+            + " ["
+            + str(step.phase)
+            + "]\n"
+            + step_text(step),
+        );
+    }
+    if len(parsed_run.steps) > len(shown_steps) {
+        lines.append(
+            "... "
+            + str(len(parsed_run.steps) - len(shown_steps))
+            + " additional decision steps omitted from this raw prompt pack."
         );
     }
     return lines;
@@ -143,14 +702,14 @@ def _first_interesting_step(parsed_run: any) -> int {
 
 def _raw_baseline_pack(parsed_run: any, run_view: dict[str, any]) -> str {
     lines: list[str] = [];
-    lines.append("TraceForge raw trajectory baseline pack");
-    lines.append("Task: Review this coding-agent run directly from the raw trajectory without external summaries.");
-    lines.append("Return a typed RunDiagnosis using only the transcript below.");
-    lines.append("If the run never really started, return UNKNOWN and critical_step_idx = -1.");
+    lines.append("Evidence mode: raw_transcript");
     lines.append("Run ID: " + str(run_view["run_id"]));
+    lines.append("Task title: " + str(run_view["task_title"]));
     lines.append("Source path: " + str(run_view["source_path"]));
     lines.append("Transcript:");
     lines.extend(_raw_turn_lines(parsed_run));
+    lines.append("Canonical decision step index map (use these 0-based step_idx values in the output JSON):");
+    lines.extend(_decision_step_lines(parsed_run));
     return truncate_text("\n\n".join(lines), 14000);
 }
 
@@ -163,9 +722,7 @@ def _structured_retrieval_pack(parsed_run: any, run_view: dict[str, any]) -> str
     );
 
     lines: list[str] = [];
-    lines.append("TraceForge structured retrieval pack");
-    lines.append("Task: Diagnose the run using retrieved exact evidence spans plus graph context.");
-    lines.append("Return a typed RunDiagnosis using only the evidence in this pack.");
+    lines.append("Evidence mode: traceforge_retrieval");
     lines.append("Run ID: " + str(run_view["run_id"]));
     lines.append("Task title: " + str(run_view["task_title"]));
     lines.append("Primary deterministic family: " + str(run_view["primary_failure"]));
@@ -332,15 +889,37 @@ def _fallback_structured_diagnosis(run_view: dict[str, any], parsed_run: any, pr
     };
 }
 
-def _llm_diagnosis(prompt_pack: str, run_view: dict[str, any], pack_mode: str) -> dict[str, any] {
-    diagnosis = propose_run_diagnosis(prompt_pack);
-    return _diagnosis_to_dict(
+def _provider_diagnosis(prompt_pack: str, run_view: dict[str, any], pack_mode: str, provider: str = "auto", model: str = "") -> dict[str, any] {
+    resolved = _resolve_provider(provider, model);
+    if not resolved["available"] {
+        raise RuntimeError("No configured model provider is available for rigorous evaluation.");
+    }
+    response = {};
+    if str(resolved["provider"]) == "codex" {
+        response = _codex_completion(
+            _shared_run_diagnosis_instruction(),
+            prompt_pack,
+            str(resolved["model"]),
+            _diagnosis_output_schema(),
+        );
+    } else {
+        response = _provider_completion(
+            str(resolved["provider"]),
+            str(resolved["model"]),
+            _shared_run_diagnosis_instruction(),
+            prompt_pack,
+        );
+    }
+    parsed = _extract_json_object(str(response["text"]));
+    return _diagnosis_from_json(
         str(run_view["run_id"]),
-        diagnosis,
+        parsed,
         pack_mode,
         prompt_pack,
-        True,
-        "llm_run_diagnosis",
+        str(response["provider"]),
+        str(response["model"]),
+        float(response["latency_ms"]),
+        response["usage"],
     );
 }
 
@@ -457,38 +1036,175 @@ def _verifier_pack(run_view: dict[str, any], blinded: dict[str, any]) -> str {
     return truncate_text("\n".join(lines), 12000);
 }
 
-def _llm_verdict(run_view: dict[str, any], blinded: dict[str, any], assignment: dict[str, str]) -> dict[str, any] {
+def _provider_verdict(run_view: dict[str, any], blinded: dict[str, any], assignment: dict[str, str], provider: str = "auto", model: str = "") -> dict[str, any] {
     verifier_pack = _verifier_pack(run_view, blinded);
-    verdict = compare_run_diagnoses(verifier_pack);
-    winner = str(verdict.winner or "tie").lower();
-    if winner == "a" {
-        winner = assignment["A"];
-    } elif winner == "b" {
-        winner = assignment["B"];
-    } elif winner not in {"baseline", "structured", "tie"} {
-        winner = "tie";
+    resolved = _resolve_provider(provider, model);
+    if not resolved["available"] {
+        raise RuntimeError("No configured model provider is available for rigorous evaluation.");
     }
-    blinded_winner = "tie";
-    if winner == "baseline" {
-        blinded_winner = "A" if assignment["A"] == "baseline" else "B";
-    } elif winner == "structured" {
-        blinded_winner = "A" if assignment["A"] == "structured" else "B";
+    response = {};
+    if str(resolved["provider"]) == "codex" {
+        response = _codex_completion(
+            _shared_verdict_instruction(),
+            verifier_pack,
+            str(resolved["model"]),
+            _verdict_output_schema(),
+        );
+    } else {
+        response = _provider_completion(
+            str(resolved["provider"]),
+            str(resolved["model"]),
+            _shared_verdict_instruction(),
+            verifier_pack,
+        );
     }
+    parsed = _extract_json_object(str(response["text"]));
+    return _verdict_from_json(
+        parsed,
+        assignment,
+        str(response["provider"]),
+        str(response["model"]),
+        verifier_pack,
+        float(response["latency_ms"]),
+        response["usage"],
+    );
+}
+
+def _run_group(run_item: dict[str, any]) -> str {
+    if int(run_item.get("step_count") or 0) <= 0 {
+        return "startup";
+    }
+    return "substantive";
+}
+
+def _selection_bucket(run_item: dict[str, any]) -> str {
+    cluster_id = str(run_item.get("cluster_id") or "");
+    if cluster_id {
+        return "cluster:" + cluster_id;
+    }
+    return "family:" + str(run_item.get("primary_failure") or "UNKNOWN");
+}
+
+def _round_robin_select(run_items: list[dict[str, any]], limit: int, use_cluster_bucket: bool = True) -> list[dict[str, any]] {
+    limit = _coerce_int(limit, 0);
+    if limit <= 0 {
+        return [];
+    }
+    buckets: dict[str, list[dict[str, any]]] = {};
+    for run_item in sorted(
+        run_items,
+        key=lambda item: any -> any : (
+            str(item.get("primary_failure") or "UNKNOWN"),
+            -int(item.get("step_count") or 0),
+            str(item.get("run_id") or ""),
+        ),
+    ) {
+        bucket_name = "family:" + str(run_item.get("primary_failure") or "UNKNOWN");
+        if use_cluster_bucket {
+            bucket_name = _selection_bucket(run_item);
+        }
+        if bucket_name not in buckets {
+            buckets[bucket_name] = [];
+        }
+        buckets[bucket_name].append(run_item);
+    }
+
+    selected: list[dict[str, any]] = [];
+    bucket_names = sorted(buckets.keys());
+    while len(selected) < limit {
+        added_in_round = False;
+        for bucket_name in bucket_names {
+            bucket_items = buckets.get(bucket_name, []);
+            if len(bucket_items) == 0 {
+                continue;
+            }
+            selected.append(bucket_items.pop(0));
+            added_in_round = True;
+            if len(selected) >= limit {
+                break;
+            }
+        }
+        if not added_in_round {
+            break;
+        }
+    }
+    return selected;
+}
+
+def _selected_eval_runs(
+    overview: dict[str, any],
+    substantive_limit: int = 20,
+    startup_limit: int = 5,
+    explicit_run_ids: list[str] = [],
+) -> dict[str, any] {
+    substantive_limit = _coerce_int(substantive_limit, 20);
+    startup_limit = _coerce_int(startup_limit, 5);
+    by_run_id: dict[str, dict[str, any]] = {};
+    for run_item in overview["runs"] {
+        by_run_id[str(run_item["run_id"])] = run_item;
+    }
+
+    if len(explicit_run_ids) > 0 {
+        selected_explicit: list[dict[str, any]] = [];
+        for run_id in explicit_run_ids {
+            run_item = by_run_id.get(str(run_id));
+            if run_item is not None {
+                selected_explicit.append(run_item);
+            }
+        }
+        return {
+            "selected": selected_explicit,
+            "substantive": [item for item in selected_explicit if _run_group(item) == "substantive"],
+            "startup": [item for item in selected_explicit if _run_group(item) == "startup"],
+        };
+    }
+
+    substantive_runs: list[dict[str, any]] = [];
+    startup_runs: list[dict[str, any]] = [];
+    for run_item in overview["runs"] {
+        if _run_group(run_item) == "startup" {
+            startup_runs.append(run_item);
+        } else {
+            substantive_runs.append(run_item);
+        }
+    }
+
+    selected_substantive = _round_robin_select(substantive_runs, substantive_limit, True);
+    selected_startup = _round_robin_select(startup_runs, startup_limit, False);
+    selected = selected_substantive + selected_startup;
     return {
-        "winner": winner,
-        "blinded_winner": blinded_winner,
-        "raw_score": float(verdict.raw_score),
-        "structured_score": float(verdict.structured_score),
-        "evidence_validity_winner": str(verdict.evidence_validity_winner),
-        "pivot_quality_winner": str(verdict.pivot_quality_winner),
-        "specificity_winner": str(verdict.specificity_winner),
-        "actionability_winner": str(verdict.actionability_winner),
-        "hallucination_winner": str(verdict.hallucination_winner),
-        "rationale": str(verdict.rationale),
-        "llm_used": True,
-        "status": "llm_blinded_verdict",
-        "verifier_pack": verifier_pack,
+        "selected": selected,
+        "substantive": selected_substantive,
+        "startup": selected_startup,
     };
+}
+
+def _evaluation_export_stem(batch_id: str, provider: str = "auto", model: str = "", resolved: dict[str, any] | None = None) -> str {
+    requested_provider = str(provider or "auto").lower();
+    requested_model = str(model or "");
+    if requested_provider == "auto" and not requested_model {
+        if resolved is None or (not resolved["available"] and not str(resolved["provider"] or "")) {
+            return batch_id;
+        }
+    }
+
+    label_provider = requested_provider;
+    if label_provider == "auto" and resolved is not None and str(resolved["provider"] or "") {
+        label_provider = str(resolved["provider"]);
+    }
+    if not label_provider or label_provider == "auto" {
+        return batch_id;
+    }
+
+    label_model = requested_model;
+    if not label_model and resolved is not None and str(resolved["model"] or "") {
+        label_model = str(resolved["model"]);
+    }
+    stem = batch_id + "_" + _slugify_label(label_provider);
+    if label_model {
+        stem += "_" + _slugify_label(label_model);
+    }
+    return stem;
 }
 
 def _baseline_blind_spots(baseline: dict[str, any]) -> list[str] {
@@ -520,35 +1236,110 @@ def _structured_support_points(run_view: dict[str, any], structured: dict[str, a
     return points;
 }
 
-def compare_run_harness_summary(root_node: any, run_id: str, batch_id: str = "") -> dict[str, any] {
-    run_view = run_view_summary(root_node, run_id, batch_id);
-    if run_view["status"] == "stub" {
-        return {
-            "run_id": run_id,
-            "status": "missing",
-            "message": "Run was not found.",
-        };
+def _timeline_from_parsed(parsed_run: any) -> list[dict[str, any]] {
+    timeline: list[dict[str, any]] = [];
+    seen_hashes: set[str] = set();
+    for step in parsed_run.steps {
+        repeated = step.content_hash in seen_hashes;
+        seen_hashes.add(step.content_hash);
+        timeline.append(
+            {
+                "idx": step.index,
+                "kind": step.kind,
+                "phase": step.phase,
+                "excerpt": step.excerpt,
+                "touched_files": list(step.touched_files),
+                "has_patch": bool(step.patch_text),
+                "has_test": bool(step.test_text),
+                "has_error": bool(step.error_text),
+                "repeated": repeated,
+            }
+        );
     }
+    return timeline;
+}
 
-    target_batch_id = batch_id;
-    if not target_batch_id and len(run_view["artifacts"]["cluster_ids"]) > 0 {
-        target_batch_id = str(run_view["artifacts"]["cluster_ids"][0]).split(":")[0];
+def _critical_window_from_timeline(timeline: list[dict[str, any]], critical_step_idx: int, radius: int = 1) -> list[dict[str, any]] {
+    if critical_step_idx < 0 {
+        return [];
     }
-    parsed_run = parse_run(run_view["source_path"], run_id);
+    start = max(critical_step_idx - radius, 0);
+    stop = min(critical_step_idx + radius, len(timeline) - 1);
+    window: list[dict[str, any]] = [];
+    for index=start to index<=stop by index+=1 {
+        window.append(timeline[index]);
+    }
+    return window;
+}
+
+def _lightweight_run_view(batch_id: str, run_item: dict[str, any], parsed_run: any) -> dict[str, any] {
+    fingerprint = compute_run_fingerprint(parsed_run);
+    timeline = _timeline_from_parsed(parsed_run);
+    critical = localize_critical_step(parsed_run, fingerprint);
+    primary_failure = str(run_item.get("primary_failure") or dominant_failure_label(fingerprint));
+    cluster_ids: list[str] = [];
+    if str(run_item.get("cluster_id") or "") {
+        cluster_ids.append(str(run_item["cluster_id"]));
+    }
+    return {
+        "run_id": str(run_item.get("run_id") or parsed_run.run_id),
+        "batch_id": batch_id,
+        "task_title": str(run_item.get("task_title") or parsed_run.task_title or ""),
+        "source_path": str(run_item.get("source_path") or parsed_run.source_path),
+        "summary": str(run_item.get("summary") or ""),
+        "primary_failure": primary_failure,
+        "critical_step_idx": int(critical["critical_step_idx"]),
+        "critical_evidence_window": _critical_window_from_timeline(timeline, int(critical["critical_step_idx"])),
+        "timeline": timeline,
+        "artifacts": {
+            "turn_count": len(parsed_run.turns),
+            "metadata": dict(parsed_run.metadata),
+            "fingerprint": dict(fingerprint),
+            "graph_preview": {
+                "status": "eval_lightweight",
+            },
+            "failure_hypotheses": [],
+            "cluster_ids": cluster_ids,
+        },
+        "status": "eval_lightweight",
+    };
+}
+
+def _compare_from_run_view(
+    run_id: str,
+    target_batch_id: str,
+    run_view: dict[str, any],
+    parsed_run: any,
+    provider: str = "auto",
+    model: str = "",
+) -> dict[str, any] {
     raw_pack = _raw_baseline_pack(parsed_run, run_view);
     structured_pack = _structured_retrieval_pack(parsed_run, run_view);
+    resolved = _resolve_provider(provider, model);
 
     baseline = _fallback_raw_diagnosis(run_view, parsed_run, raw_pack);
     structured = _fallback_structured_diagnosis(run_view, parsed_run, structured_pack);
 
-    if llm_enabled() {
+    if resolved["available"] {
         try {
-            baseline = _llm_diagnosis(raw_pack, run_view, "raw_transcript_prompt");
+            baseline = _provider_diagnosis(
+                raw_pack,
+                run_view,
+                "raw_transcript_prompt",
+                str(resolved["provider"]),
+                str(resolved["model"]),
+            );
         } except Exception as err {
             baseline["llm_error"] = str(err);
         }
         try {
-            structured = _llm_diagnosis(structured_pack, run_view, "traceforge_retrieval_prompt");
+            structured = _provider_diagnosis(
+                structured_pack,
+                run_view,
+                "traceforge_retrieval_prompt",
+                str(resolved["provider"]),
+                str(resolved["model"]),
+            );
         } except Exception as err {
             structured["llm_error"] = str(err);
         }
@@ -559,10 +1350,16 @@ def compare_run_harness_summary(root_node: any, run_id: str, batch_id: str = "")
 
     verdict = _deterministic_verdict(run_view, baseline, structured, assignment);
     comparison_mode = "deterministic_proxy";
-    if llm_enabled() {
+    if resolved["available"] {
         try {
-            verdict = _llm_verdict(run_view, blinded, assignment);
-            comparison_mode = "same_model_blinded";
+            verdict = _provider_verdict(
+                run_view,
+                blinded,
+                assignment,
+                str(resolved["provider"]),
+                str(resolved["model"]),
+            );
+            comparison_mode = str(resolved["provider"]) + "_same_model_blinded";
         } except Exception as err {
             verdict["llm_error"] = str(err);
         }
@@ -578,6 +1375,15 @@ def compare_run_harness_summary(root_node: any, run_id: str, batch_id: str = "")
     return {
         "run_id": run_id,
         "batch_id": target_batch_id,
+        "run_group": _run_group(
+            {
+                "step_count": len(run_view["timeline"]),
+            }
+        ),
+        "step_count": len(run_view["timeline"]),
+        "provider": str(resolved["provider"] or ""),
+        "model": str(resolved["model"] or ""),
+        "provider_available": bool(resolved["available"]),
         "comparison_mode": comparison_mode,
         "baseline": {
             "mode": baseline["mode"],
@@ -623,11 +1429,38 @@ def compare_run_harness_summary(root_node: any, run_id: str, batch_id: str = "")
     };
 }
 
+def compare_run_harness_summary(
+    root_node: any,
+    run_id: str,
+    batch_id: str = "",
+    provider: str = "auto",
+    model: str = "",
+) -> dict[str, any] {
+    run_view = run_view_summary(root_node, run_id, batch_id);
+    if run_view["status"] == "stub" {
+        return {
+            "run_id": run_id,
+            "status": "missing",
+            "message": "Run was not found.",
+        };
+    }
+
+    target_batch_id = batch_id;
+    if not target_batch_id and len(run_view["artifacts"]["cluster_ids"]) > 0 {
+        target_batch_id = str(run_view["artifacts"]["cluster_ids"][0]).split(":")[0];
+    }
+    parsed_run = parse_run(run_view["source_path"], run_id);
+    return _compare_from_run_view(run_id, target_batch_id, run_view, parsed_run, provider, model);
+}
+
 def export_blinded_eval_summary(
     root_node: any,
     batch_id: str,
     limit: int = 10,
     substantive_only: bool = True,
+    provider: str = "auto",
+    model: str = "",
+    run_ids: list[str] = [],
 ) -> dict[str, any] {
     overview = batch_overview_summary(root_node, batch_id);
     if overview["status"] == "missing" {
@@ -639,34 +1472,54 @@ def export_blinded_eval_summary(
     }
 
     selected_runs: list[str] = [];
-    for run_item in overview["runs"] {
-        if substantive_only and int(run_item["step_count"]) <= 0 {
-            continue;
+    selected_items: list[dict[str, any]] = [];
+    if len(run_ids) > 0 {
+        selected_runs = [str(run_id) for run_id in run_ids];
+        by_run_id: dict[str, dict[str, any]] = {};
+        for run_item in overview["runs"] {
+            by_run_id[str(run_item["run_id"])] = run_item;
         }
-        selected_runs.append(str(run_item["run_id"]));
-        if len(selected_runs) >= limit {
-            break;
+        for run_id in selected_runs {
+            if str(run_id) in by_run_id {
+                selected_items.append(by_run_id[str(run_id)]);
+            }
         }
-    }
-    if len(selected_runs) == 0 {
-        selected_runs = [str(run_item["run_id"]) for run_item in overview["runs"][: max(limit, 0)]];
+    } else {
+        selection = _selected_eval_runs(
+            overview,
+            limit if substantive_only else max(limit - 2, 0),
+            0 if substantive_only else min(2, limit),
+        );
+        selected_items = selection["selected"][: max(limit, 0)];
+        selected_runs = [str(run_item["run_id"]) for run_item in selected_items];
+        if len(selected_runs) == 0 {
+            selected_items = overview["runs"][: max(limit, 0)];
+            selected_runs = [str(run_item["run_id"]) for run_item in selected_items];
+        }
     }
 
+    resolved = _resolve_provider(provider, model);
+    export_stem = _evaluation_export_stem(batch_id, provider, model, resolved);
     comparisons: list[dict[str, any]] = [];
     blind_key: dict[str, any] = {};
     blinded_lines: list[str] = [
         "# TraceForge Blinded Evaluation Sheet",
         "",
         "- Batch ID: `" + batch_id + "`",
-        "- Comparison mode: same-model blinded when API key is present, deterministic proxy otherwise",
+        "- Requested provider: `" + str(provider) + "`",
+        "- Requested model: `" + str(model or "default") + "`",
+        "- Comparison mode: same-model blinded when a provider API key is present, deterministic proxy otherwise",
         "- Selected runs: " + str(len(selected_runs)),
         "",
         "Score each case on evidence validity, pivot quality, specificity, actionability, and hallucination avoidance.",
         "",
     ];
 
-    for run_id in selected_runs {
-        comparison = compare_run_harness_summary(root_node, run_id, batch_id);
+    for run_item in selected_items {
+        run_id = str(run_item["run_id"]);
+        parsed_run = parse_run(str(run_item.get("source_path") or ""), run_id);
+        light_run_view = _lightweight_run_view(batch_id, run_item, parsed_run);
+        comparison = _compare_from_run_view(run_id, batch_id, light_run_view, parsed_run, provider, model);
         comparisons.append(comparison);
         blind_key[run_id] = comparison["blinded"]["assignment"];
 
@@ -696,9 +1549,9 @@ def export_blinded_eval_summary(
 
     export_dir = Path("exports/evals");
     export_dir.mkdir(parents=True, exist_ok=True);
-    blind_md_path = export_dir.joinpath(batch_id + "_blind.md");
-    blind_key_path = export_dir.joinpath(batch_id + "_blind_key.json");
-    summary_json_path = export_dir.joinpath(batch_id + "_comparison.json");
+    blind_md_path = export_dir.joinpath(export_stem + "_blind.md");
+    blind_key_path = export_dir.joinpath(export_stem + "_blind_key.json");
+    summary_json_path = export_dir.joinpath(export_stem + "_comparison.json");
 
     blind_md_text = "\n".join(blinded_lines).strip() + "\n";
     blind_md_path.write_text(blind_md_text, encoding="utf-8");
@@ -710,9 +1563,510 @@ def export_blinded_eval_summary(
         "status": "exported",
         "selected_run_count": len(selected_runs),
         "comparison_mode": comparisons[0]["comparison_mode"] if len(comparisons) > 0 else "deterministic_proxy",
+        "provider": comparisons[0]["provider"] if len(comparisons) > 0 else "",
+        "model": comparisons[0]["model"] if len(comparisons) > 0 else "",
         "blind_sheet_path": str(blind_md_path),
         "blind_key_path": str(blind_key_path),
         "summary_json_path": str(summary_json_path),
         "preview": truncate_text(blind_md_text, 1200),
+    };
+}
+
+def _gold_template_record(root_node: any, batch_id: str, run_item: dict[str, any]) -> dict[str, any] {
+    return {
+        "batch_id": batch_id,
+        "run_id": str(run_item["run_id"]),
+        "group": _run_group(run_item),
+        "task_title": str(run_item.get("task_title") or ""),
+        "source_path": str(run_item.get("source_path") or ""),
+        "step_count": int(run_item.get("step_count") or 0),
+        "annotation_instructions": "Annotate from the raw trajectory and visible run context only. Do not inspect model outputs while labeling.",
+        "gold_failure_class": "",
+        "gold_critical_step_idx": -1,
+        "gold_supporting_steps": [],
+        "gold_short_rationale": "",
+        "gold_memory_rule_useful": "",
+    };
+}
+
+def export_gold_annotation_template_summary(
+    root_node: any,
+    batch_id: str,
+    substantive_limit: int = 20,
+    startup_limit: int = 5,
+) -> dict[str, any] {
+    substantive_limit = _coerce_int(substantive_limit, 20);
+    startup_limit = _coerce_int(startup_limit, 5);
+    overview = batch_overview_summary(root_node, batch_id);
+    if overview["status"] == "missing" {
+        return {
+            "batch_id": batch_id,
+            "status": "missing",
+            "message": "Batch was not found.",
+        };
+    }
+
+    selection = _selected_eval_runs(overview, substantive_limit, startup_limit);
+    annotations: list[dict[str, any]] = [];
+    markdown_lines: list[str] = [
+        "# TraceForge Gold Annotation Worksheet",
+        "",
+        "- Batch ID: `" + batch_id + "`",
+        "- Substantive runs: " + str(len(selection["substantive"])),
+        "- Startup runs: " + str(len(selection["startup"])),
+        "",
+        "Annotate each run from the raw trajectory only.",
+        "",
+    ];
+
+    for run_item in selection["selected"] {
+        record = _gold_template_record(root_node, batch_id, run_item);
+        annotations.append(record);
+        markdown_lines.append("## Run `" + str(record["run_id"]) + "`");
+        markdown_lines.append("");
+        markdown_lines.append("- Group: " + str(record["group"]));
+        markdown_lines.append("- Task title: " + str(record["task_title"]));
+        markdown_lines.append("- Source path: `" + str(record["source_path"]) + "`");
+        markdown_lines.append("- Step count: " + str(record["step_count"]));
+        markdown_lines.append("- Gold failure class: ____");
+        markdown_lines.append("- Gold critical step idx: ____");
+        markdown_lines.append("- Gold supporting steps: ____");
+        markdown_lines.append("- Gold short rationale: ____");
+        markdown_lines.append("- Gold memory rule useful (yes/no): ____");
+        markdown_lines.append("");
+    }
+
+    payload = {
+        "batch_id": batch_id,
+        "substantive_limit": substantive_limit,
+        "startup_limit": startup_limit,
+        "annotations": annotations,
+    };
+    export_dir = Path("exports/evals");
+    export_dir.mkdir(parents=True, exist_ok=True);
+    json_path = export_dir.joinpath(batch_id + "_gold_template.json");
+    md_path = export_dir.joinpath(batch_id + "_gold_template.md");
+    json_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8");
+    md_text = "\n".join(markdown_lines).strip() + "\n";
+    md_path.write_text(md_text, encoding="utf-8");
+
+    return {
+        "batch_id": batch_id,
+        "status": "exported",
+        "substantive_run_count": len(selection["substantive"]),
+        "startup_run_count": len(selection["startup"]),
+        "selected_run_count": len(selection["selected"]),
+        "json_path": str(json_path),
+        "markdown_path": str(md_path),
+        "preview": truncate_text(md_text, 1200),
+    };
+}
+
+def _load_gold_annotations(annotation_path: str) -> list[dict[str, any]] {
+    payload = json.loads(Path(annotation_path).read_text(encoding="utf-8"));
+    if isinstance(payload, dict) and isinstance(payload.get("annotations"), list) {
+        return payload["annotations"];
+    }
+    if isinstance(payload, list) {
+        return payload;
+    }
+    return [];
+}
+
+def _gold_annotations_by_run(annotation_path: str) -> dict[str, dict[str, any]] {
+    annotation_map: dict[str, dict[str, any]] = {};
+    for item in _load_gold_annotations(annotation_path) {
+        if not isinstance(item, dict) {
+            continue;
+        }
+        batch_id = str(item.get("batch_id") or "");
+        run_id = str(item.get("run_id") or "");
+        if not run_id {
+            continue;
+        }
+        annotation_map[batch_id + "::" + run_id] = item;
+    }
+    return annotation_map;
+}
+
+def _arm_score(prediction: dict[str, any], gold: dict[str, any], step_count: int) -> dict[str, any] {
+    gold_failure_class = _normalize_failure_class(str(gold.get("gold_failure_class") or "UNKNOWN"));
+    gold_step = _coerce_int(gold.get("gold_critical_step_idx"), -1);
+    gold_supporting_steps = [];
+    for step_idx in gold.get("gold_supporting_steps", []) {
+        gold_supporting_steps.append(int(step_idx));
+    }
+    if len(gold_supporting_steps) == 0 and gold_step >= 0 {
+        gold_supporting_steps.append(gold_step);
+    }
+    useful_rule_expected = str(gold.get("gold_memory_rule_useful") or "").lower() == "yes";
+
+    failure_class_match = bool(gold_failure_class) and prediction["failure_class"] == gold_failure_class;
+    critical_step_exact = gold_step >= 0 and int(prediction["critical_step_idx"]) == gold_step;
+    critical_step_adjacent = gold_step >= 0 and abs(int(prediction["critical_step_idx"]) - gold_step) <= 1;
+    evidence_support_hit = False;
+    invalid_evidence_ref = False;
+    for evidence in prediction["evidence_refs"] {
+        evidence_step = _coerce_int(evidence.get("step_idx"), -1);
+        if evidence_step in gold_supporting_steps {
+            evidence_support_hit = True;
+        }
+        if step_count <= 0 {
+            if evidence_step >= 0 {
+                invalid_evidence_ref = True;
+            }
+        } elif evidence_step < 0 or evidence_step >= step_count {
+            invalid_evidence_ref = True;
+        }
+    }
+
+    useful_rule_present = bool(str(prediction.get("memory_rule") or "").strip());
+    score = 0.0;
+    if failure_class_match {
+        score += 1.0;
+    }
+    if critical_step_exact {
+        score += 1.0;
+    } elif critical_step_adjacent {
+        score += 0.5;
+    }
+    if evidence_support_hit {
+        score += 1.0;
+    }
+    if useful_rule_expected and useful_rule_present {
+        score += 0.5;
+    }
+    if invalid_evidence_ref {
+        score -= 1.0;
+    }
+    return {
+        "score": round(score, 4),
+        "failure_class_match": failure_class_match,
+        "critical_step_exact": critical_step_exact,
+        "critical_step_adjacent": critical_step_adjacent,
+        "evidence_support_hit": evidence_support_hit,
+        "useful_rule_expected": useful_rule_expected,
+        "useful_rule_present": useful_rule_present,
+        "invalid_evidence_ref": invalid_evidence_ref,
+    };
+}
+
+def _aggregate_arm_results(rows: list[dict[str, any]], arm_key: str) -> dict[str, any] {
+    total = len(rows);
+    if total == 0 {
+        return {
+            "run_count": 0,
+            "mean_objective_score": 0.0,
+            "failure_class_accuracy": 0.0,
+            "critical_step_exact_rate": 0.0,
+            "critical_step_adjacent_rate": 0.0,
+            "evidence_support_rate": 0.0,
+            "useful_rule_coverage": 0.0,
+            "invalid_evidence_ref_rate": 0.0,
+        };
+    }
+    score_sum = 0.0;
+    failure_matches = 0;
+    exact_matches = 0;
+    adjacent_matches = 0;
+    evidence_hits = 0;
+    useful_rule_denominator = 0;
+    useful_rule_hits = 0;
+    invalid_refs = 0;
+    for row in rows {
+        result = row[arm_key];
+        score_sum += float(result["score"]);
+        if result["failure_class_match"] {
+            failure_matches += 1;
+        }
+        if result["critical_step_exact"] {
+            exact_matches += 1;
+        }
+        if result["critical_step_adjacent"] {
+            adjacent_matches += 1;
+        }
+        if result["evidence_support_hit"] {
+            evidence_hits += 1;
+        }
+        if result["useful_rule_expected"] {
+            useful_rule_denominator += 1;
+            if result["useful_rule_present"] {
+                useful_rule_hits += 1;
+            }
+        }
+        if result["invalid_evidence_ref"] {
+            invalid_refs += 1;
+        }
+    }
+    return {
+        "run_count": total,
+        "mean_objective_score": round(score_sum / total, 4),
+        "failure_class_accuracy": round(failure_matches / total, 4),
+        "critical_step_exact_rate": round(exact_matches / total, 4),
+        "critical_step_adjacent_rate": round(adjacent_matches / total, 4),
+        "evidence_support_rate": round(evidence_hits / total, 4),
+        "useful_rule_coverage": round(useful_rule_hits / useful_rule_denominator, 4) if useful_rule_denominator > 0 else 0.0,
+        "invalid_evidence_ref_rate": round(invalid_refs / total, 4),
+    };
+}
+
+def _score_comparison_payload(comparisons: list[dict[str, any]], annotation_path: str) -> dict[str, any] {
+    gold_by_run = _gold_annotations_by_run(annotation_path);
+    scored_rows: list[dict[str, any]] = [];
+    structured_wins = 0;
+    baseline_wins = 0;
+    ties = 0;
+
+    for comparison in comparisons {
+        run_key = str(comparison.get("batch_id") or "") + "::" + str(comparison["run_id"]);
+        gold = gold_by_run.get(run_key);
+        if gold is None {
+            continue;
+        }
+        baseline_row = _arm_score(comparison["baseline"], gold, int(comparison.get("step_count") or 0));
+        structured_row = _arm_score(comparison["structured"], gold, int(comparison.get("step_count") or 0));
+        if float(structured_row["score"]) > float(baseline_row["score"]) {
+            structured_wins += 1;
+        } elif float(baseline_row["score"]) > float(structured_row["score"]) {
+            baseline_wins += 1;
+        } else {
+            ties += 1;
+        }
+        scored_rows.append(
+            {
+                "run_id": comparison["run_id"],
+                "batch_id": comparison["batch_id"],
+                "group": comparison.get("run_group") or "substantive",
+                "gold_failure_class": gold.get("gold_failure_class"),
+                "gold_critical_step_idx": gold.get("gold_critical_step_idx"),
+                "baseline": baseline_row,
+                "structured": structured_row,
+                "verifier_winner": comparison["verifier"]["winner"],
+            }
+        );
+    }
+
+    baseline_metrics = _aggregate_arm_results(scored_rows, "baseline");
+    structured_metrics = _aggregate_arm_results(scored_rows, "structured");
+    return {
+        "annotation_path": annotation_path,
+        "labeled_run_count": len(scored_rows),
+        "pairwise_wins": {
+            "baseline": baseline_wins,
+            "structured": structured_wins,
+            "tie": ties,
+        },
+        "baseline": baseline_metrics,
+        "structured": structured_metrics,
+        "uplift": {
+            "mean_objective_score_delta": round(structured_metrics["mean_objective_score"] - baseline_metrics["mean_objective_score"], 4),
+            "failure_class_accuracy_delta": round(structured_metrics["failure_class_accuracy"] - baseline_metrics["failure_class_accuracy"], 4),
+            "critical_step_exact_delta": round(structured_metrics["critical_step_exact_rate"] - baseline_metrics["critical_step_exact_rate"], 4),
+            "critical_step_adjacent_delta": round(structured_metrics["critical_step_adjacent_rate"] - baseline_metrics["critical_step_adjacent_rate"], 4),
+            "evidence_support_delta": round(structured_metrics["evidence_support_rate"] - baseline_metrics["evidence_support_rate"], 4),
+            "useful_rule_coverage_delta": round(structured_metrics["useful_rule_coverage"] - baseline_metrics["useful_rule_coverage"], 4),
+            "invalid_evidence_ref_delta": round(structured_metrics["invalid_evidence_ref_rate"] - baseline_metrics["invalid_evidence_ref_rate"], 4),
+        },
+        "rows": scored_rows,
+    };
+}
+
+def _rigorous_eval_markdown(
+    batch_id: str,
+    provider: str,
+    model: str,
+    comparisons: list[dict[str, any]],
+    score_summary: dict[str, any] = {},
+) -> str {
+    verifier_counts = {
+        "baseline": 0,
+        "structured": 0,
+        "tie": 0,
+    };
+    baseline_tokens = 0;
+    structured_tokens = 0;
+    for comparison in comparisons {
+        winner = str(comparison["verifier"]["winner"] or "tie");
+        if winner not in verifier_counts {
+            winner = "tie";
+        }
+        verifier_counts[winner] += 1;
+        baseline_tokens += int(comparison["baseline"]["pack_token_estimate"]);
+        structured_tokens += int(comparison["structured"]["pack_token_estimate"]);
+    }
+
+    lines: list[str] = [
+        "# TraceForge Rigorous Evaluation Summary",
+        "",
+        "- Batch ID: `" + batch_id + "`",
+        "- Provider: `" + str(provider or "deterministic_fallback") + "`",
+        "- Model: `" + str(model or "default") + "`",
+        "- Compared runs: " + str(len(comparisons)),
+        "- Comparison mode: " + (comparisons[0]["comparison_mode"] if len(comparisons) > 0 else "deterministic_proxy"),
+        "",
+        "## Blinded Verifier Counts",
+        "",
+        "- Structured wins: " + str(verifier_counts["structured"]),
+        "- Raw wins: " + str(verifier_counts["baseline"]),
+        "- Ties: " + str(verifier_counts["tie"]),
+    ];
+
+    if len(comparisons) > 0 {
+        lines.extend([
+            "",
+            "## Prompt Budget Snapshot",
+            "",
+            "- Mean raw pack token estimate: " + str(round(baseline_tokens / len(comparisons), 2)),
+            "- Mean TraceForge pack token estimate: " + str(round(structured_tokens / len(comparisons), 2)),
+        ]);
+    }
+
+    if score_summary and int(score_summary.get("labeled_run_count") or 0) > 0 {
+        lines.extend([
+            "",
+            "## Gold-Scored Uplift",
+            "",
+            "- Labeled runs: " + str(score_summary["labeled_run_count"]),
+            "- Pairwise structured wins: " + str(score_summary["pairwise_wins"]["structured"]),
+            "- Pairwise raw wins: " + str(score_summary["pairwise_wins"]["baseline"]),
+            "- Pairwise ties: " + str(score_summary["pairwise_wins"]["tie"]),
+            "",
+            "### Objective Metrics",
+            "",
+            "- Raw failure-class accuracy: " + str(score_summary["baseline"]["failure_class_accuracy"]),
+            "- TraceForge failure-class accuracy: " + str(score_summary["structured"]["failure_class_accuracy"]),
+            "- Raw critical-step exact rate: " + str(score_summary["baseline"]["critical_step_exact_rate"]),
+            "- TraceForge critical-step exact rate: " + str(score_summary["structured"]["critical_step_exact_rate"]),
+            "- Raw evidence support rate: " + str(score_summary["baseline"]["evidence_support_rate"]),
+            "- TraceForge evidence support rate: " + str(score_summary["structured"]["evidence_support_rate"]),
+            "- Objective score delta (TraceForge - Raw): " + str(score_summary["uplift"]["mean_objective_score_delta"]),
+        ]);
+    }
+
+    return "\n".join(lines).strip() + "\n";
+}
+
+def run_rigorous_eval_summary(
+    root_node: any,
+    batch_id: str,
+    provider: str = "auto",
+    model: str = "",
+    substantive_limit: int = 20,
+    startup_limit: int = 5,
+    annotation_path: str = "",
+) -> dict[str, any] {
+    substantive_limit = _coerce_int(substantive_limit, 20);
+    startup_limit = _coerce_int(startup_limit, 5);
+    overview = batch_overview_summary(root_node, batch_id);
+    if overview["status"] == "missing" {
+        return {
+            "batch_id": batch_id,
+            "status": "missing",
+            "message": "Batch was not found.",
+        };
+    }
+
+    selection = _selected_eval_runs(overview, substantive_limit, startup_limit);
+    selected_run_ids = [str(run_item["run_id"]) for run_item in selection["selected"]];
+    blinded_export = export_blinded_eval_summary(
+        root_node,
+        batch_id,
+        len(selected_run_ids),
+        False,
+        provider,
+        model,
+        selected_run_ids,
+    );
+    comparisons = json.loads(Path(blinded_export["summary_json_path"]).read_text(encoding="utf-8"));
+
+    score_summary = {};
+    score_json_path = "";
+    if annotation_path and Path(annotation_path).exists() {
+        score_summary = _score_comparison_payload(comparisons, annotation_path);
+        score_json_path = str(
+            Path("exports/evals").joinpath(
+                batch_id
+                + "_"
+                + _slugify_label(str(blinded_export["provider"] or provider or "deterministic"))
+                + "_"
+                + _slugify_label(str(blinded_export["model"] or model or "default"))
+                + "_gold_score.json"
+            )
+        );
+        Path(score_json_path).write_text(json.dumps(score_summary, indent=2) + "\n", encoding="utf-8");
+    }
+
+    export_dir = Path("exports/evals");
+    export_dir.mkdir(parents=True, exist_ok=True);
+    summary_md_path = export_dir.joinpath(
+        batch_id
+        + "_"
+        + _slugify_label(str(blinded_export["provider"] or provider or "deterministic"))
+        + "_"
+        + _slugify_label(str(blinded_export["model"] or model or "default"))
+        + "_rigorous_eval.md"
+    );
+    summary_md_text = _rigorous_eval_markdown(
+        batch_id,
+        str(blinded_export["provider"] or provider),
+        str(blinded_export["model"] or model),
+        comparisons,
+        score_summary,
+    );
+    summary_md_path.write_text(summary_md_text, encoding="utf-8");
+
+    return {
+        "batch_id": batch_id,
+        "status": "evaluated",
+        "provider": blinded_export["provider"],
+        "model": blinded_export["model"],
+        "selected_run_count": len(selected_run_ids),
+        "substantive_run_count": len(selection["substantive"]),
+        "startup_run_count": len(selection["startup"]),
+        "comparison_mode": blinded_export["comparison_mode"],
+        "blind_sheet_path": blinded_export["blind_sheet_path"],
+        "blind_key_path": blinded_export["blind_key_path"],
+        "summary_json_path": blinded_export["summary_json_path"],
+        "summary_markdown_path": str(summary_md_path),
+        "gold_score_path": score_json_path,
+        "score_summary": score_summary,
+        "preview": truncate_text(summary_md_text, 1200),
+    };
+}
+
+def score_rigorous_eval_summary(comparison_json_path: str, annotation_path: str) -> dict[str, any] {
+    if not Path(comparison_json_path).exists() {
+        return {
+            "status": "missing",
+            "message": "Comparison export was not found.",
+            "comparison_json_path": comparison_json_path,
+        };
+    }
+    if not Path(annotation_path).exists() {
+        return {
+            "status": "missing",
+            "message": "Annotation file was not found.",
+            "annotation_path": annotation_path,
+        };
+    }
+    comparisons = json.loads(Path(comparison_json_path).read_text(encoding="utf-8"));
+    score_summary = _score_comparison_payload(comparisons, annotation_path);
+    export_dir = Path("exports/evals");
+    export_dir.mkdir(parents=True, exist_ok=True);
+    stem = Path(comparison_json_path).stem;
+    score_json_path = export_dir.joinpath(stem + "_gold_score.json");
+    score_md_path = export_dir.joinpath(stem + "_gold_score.md");
+    score_json_path.write_text(json.dumps(score_summary, indent=2) + "\n", encoding="utf-8");
+    score_md_text = _rigorous_eval_markdown("scored-from-export", "", "", comparisons, score_summary);
+    score_md_path.write_text(score_md_text, encoding="utf-8");
+    return {
+        "status": "scored",
+        "comparison_json_path": comparison_json_path,
+        "annotation_path": annotation_path,
+        "labeled_run_count": score_summary["labeled_run_count"],
+        "score_json_path": str(score_json_path),
+        "score_markdown_path": str(score_md_path),
+        "score_summary": score_summary,
+        "preview": truncate_text(score_md_text, 1200),
     };
 }
