@@ -36,27 +36,35 @@ Important note:
 - This does **not** currently match the assumption of `66` non-empty trajectories.
 - If `66` is the intended subset, define that subset explicitly before evaluation.
 
-## Current product limitation
+## Current product behavior
 
-TraceForge can ingest:
+TraceForge can now ingest:
 
 - folders under `uploads/`
 - zip archives that get extracted into `uploads/`
+- arbitrary external folders, which are automatically aliased into `uploads/` for stable reuse
 
-Right now, pointing `UploadBatch` directly at an arbitrary external folder path does **not** produce a reusable managed batch ID for later analysis. The clean evaluation path is therefore:
+Current managed upload behavior:
 
-1. create a managed local alias inside `uploads/`, or
-2. zip the run directory and let TraceForge extract it into `uploads/`
+- `UploadBatch` on an external directory creates a managed alias under `uploads/`
+- later `ParseBatch`, `AnalyzeBatch`, `GetBatchOverview`, and `GetRunView` can use the returned `upload-*` batch ID directly
+
+Observed on the candidate batch:
+
+- `UploadBatch` discovered all `100` non-empty trajectories
+- cold `AnalyzeBatch` completed in about `4s` after lazy graph hydration and reduced similarity-edge construction
+- `ExportBatchReport` completed in about `6.61s`
+- `38` runs have `messages=[]` and `api_calls=0`; these are container-start failures, not parser misses
 
 ## Recommended ingestion path
 
-Use a symlink or local copy under `uploads/` so the batch stays stable across commands.
+Use either the direct external path or a symlink/local copy under `uploads/`.
 
 Recommended local alias:
 
 `uploads/iclr_pilot100_batch -> ../SWE-Agent/Agent-X/v2/runs_iclr/iclr_summary_baseline_pilot100_baseline_w2p300_t5400_r01-20260307-040417`
 
-Example setup:
+Example setup if you want an explicit alias:
 
 ```bash
 ln -s ../SWE-Agent/Agent-X/v2/runs_iclr/iclr_summary_baseline_pilot100_baseline_w2p300_t5400_r01-20260307-040417 uploads/iclr_pilot100_batch
@@ -79,6 +87,40 @@ zip -r /home/gb10/Projects/JacHacks/uploads/iclr_pilot100.zip iclr_summary_basel
 cd /home/gb10/Projects/JacHacks
 .venv/bin/jac enter main.jac UploadBatch iclr_pilot100.zip
 ```
+
+Direct external-path ingestion also works now:
+
+```bash
+.venv/bin/jac enter main.jac UploadBatch ../SWE-Agent/Agent-X/v2/runs_iclr/iclr_summary_baseline_pilot100_baseline_w2p300_t5400_r01-20260307-040417
+```
+
+That currently returns:
+
+- `batch_id=upload-iclr_summary_baseline_pilot100_baseline_w2p300_t5400_r01-20260307-040417`
+- `run_count=100`
+- `managed_alias_created=True`
+
+## Current observed results
+
+First-pass evaluation on the candidate batch currently yields:
+
+- family counts:
+  - `TOOL_MISUSE`: `48`
+  - `INVALID_PATCH`: `14`
+  - `UNKNOWN`: `38`
+- zero-step runs: `38`
+- non-zero-step runs: `62`
+- cluster count from a fresh graph-backed overview: `4`
+  - `INVALID_PATCH`: `14`
+  - `TOOL_MISUSE`: `34`
+  - `TOOL_MISUSE fallback`: `14`
+  - `UNKNOWN`: `38`
+
+Interpretation:
+
+- the `UNKNOWN` family is largely explained by container startup failures with empty message histories
+- the real remaining evaluation question is cluster quality on the `62` runs that actually executed agent steps
+- fallback clustering is currently used to ensure that every analyzed run lands in a visible cluster, even when the similarity graph leaves a failure-family remainder unassigned
 
 ## Test phases
 

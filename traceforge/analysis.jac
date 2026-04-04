@@ -12,6 +12,7 @@ import from traceforge.graph_build {
     find_batch_node,
     find_cluster_node,
     find_run_node,
+    hydrate_run_graph,
     list_batch_clusters,
     list_cluster_patches,
     list_batch_runs,
@@ -119,6 +120,7 @@ def _hypothesis_list(run_node: Run) -> list[dict[str, any]] {
 }
 
 def _run_summary_from_node(run_node: Run) -> dict[str, any] {
+    hydrate_run_graph(run_node);
     timeline = _timeline_from_run(run_node);
     primary_failure = failure_class_name(run_node.primary_failure);
     return {
@@ -249,6 +251,7 @@ def batch_overview_summary(root_node: any, batch_id: str) -> dict[str, any] {
                 "task_title": run_node.task_title,
                 "step_count": run_node.step_count,
                 "primary_failure": failure_label,
+                "cluster_id": run_node.cluster_id,
                 "critical_step_idx": run_node.critical_step_idx,
                 "summary": run_node.summary,
             }

@@ -150,6 +150,47 @@ def _medoid_run_id(component_records: list[dict[str, any]]) -> str {
     return best_run_id;
 }
 
+def _component_similar_pairs(
+    component: list[int],
+    edges: list[tuple[int, int, float]],
+    family_records: list[dict[str, any]],
+) -> list[dict[str, any]] {
+    component_set: set[int] = set(component);
+    dedup: dict[str, dict[str, any]] = {};
+    for edge in edges {
+        left_index = edge[0];
+        right_index = edge[1];
+        if left_index not in component_set or right_index not in component_set {
+            continue;
+        }
+        left_run_id = str(family_records[left_index]["run_id"]);
+        right_run_id = str(family_records[right_index]["run_id"]);
+        if left_run_id == right_run_id {
+            continue;
+        }
+        left_id = left_run_id;
+        right_id = right_run_id;
+        if right_id < left_id {
+            left_id = right_run_id;
+            right_id = left_run_id;
+        }
+        pair_key = left_id + "||" + right_id;
+        score = float(edge[2]);
+        existing = dedup.get(pair_key);
+        if existing is None or score > float(existing["score"]) {
+            dedup[pair_key] = {
+                "left_run_id": left_id,
+                "right_run_id": right_id,
+                "score": score,
+            };
+        }
+    }
+    return sorted(
+        [dedup[key] for key in dedup],
+        key=lambda item: any -> any : (-float(item["score"]), item["left_run_id"], item["right_run_id"]),
+    );
+}
+
 def build_clusters(run_records: list[dict[str, any]], batch_id: str, top_k: int = 3, threshold: float = 0.55) -> list[dict[str, any]] {
     by_family: dict[str, list[dict[str, any]]] = {};
     for record in run_records {
@@ -172,6 +213,7 @@ def build_clusters(run_records: list[dict[str, any]], batch_id: str, top_k: int 
         components = _connected_components(len(family_records), edges);
         for (component_index, component) in enumerate(components) {
             component_records = [family_records[index] for index in component];
+            similar_pairs = _component_similar_pairs(component, edges, family_records);
             component_files: list[str] = [];
             component_errors: list[str] = [];
             component_tests: list[str] = [];
@@ -191,6 +233,7 @@ def build_clusters(run_records: list[dict[str, any]], batch_id: str, top_k: int 
                     "size": len(component_records),
                     "medoid_run_id": _medoid_run_id(component_records),
                     "run_ids": run_ids,
+                    "similar_pairs": similar_pairs,
                     "recurring_files": summarize_counts(component_files, 5),
                     "recurring_errors": summarize_counts(component_errors, 5),
                     "recurring_tests": summarize_counts(component_tests, 5),

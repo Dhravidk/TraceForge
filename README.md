@@ -23,6 +23,7 @@ This repo is now running a submission-ready Jac demo path for sample and local u
 - graph-backed batch, run, cluster, diagnosis, patch, comparison, and report walkers
 - discovered batch catalog with switching between sample and local upload batches
 - local upload support for both folders and zip archives containing `*.traj.json`
+- external folder uploads now get managed aliases under `uploads/` so they can be analyzed through the normal batch flow
 - credential-gated typed `by llm()` reasoning with deterministic fallback when no model key is present
 - Jac smoke tests for the starter demo path
 - a readable demo UI organized around batch overview, cluster explorer, run forensics, and baseline comparison
@@ -114,6 +115,7 @@ jac enter main.jac ExportBatchReport sample-starter
 ```
 
 Local upload batches are discovered from folders under [uploads](/home/gb10/Projects/JacHacks/uploads) that contain `*.traj.json` files, or from zip archives that get extracted into a top-level upload batch directory. The repo includes [local_demo_batch](/home/gb10/Projects/JacHacks/uploads/local_demo_batch) as a fixture for the folder path, and the smoke suite generates a zip fixture at runtime for the archive path.
+If you point `UploadBatch` at an external folder outside `uploads/`, TraceForge now creates a managed alias under `uploads/` so later `ParseBatch`, `AnalyzeBatch`, and `GetRunView` calls work through a stable upload batch ID.
 The demo UI now exposes a batch catalog so sample and upload batches can be browsed without changing commands.
 
 Expected project settings are in [jac.toml](/home/gb10/Projects/JacHacks/jac.toml).

@@ -85,6 +85,35 @@ test {
 }
 
 test {
+    external_dir = Path("exports/external_eval_batch");
+    external_dir.mkdir(parents=True, exist_ok=True);
+    invalid_text = Path("uploads/local_demo_batch/invalid_patch.traj.json").read_text(encoding="utf-8");
+    premature_text = Path("uploads/local_demo_batch/premature_completion.traj.json").read_text(encoding="utf-8");
+    external_dir.joinpath("invalid_patch.traj.json").write_text(invalid_text, encoding="utf-8");
+    nested_dir = external_dir.joinpath("nested");
+    nested_dir.mkdir(parents=True, exist_ok=True);
+    nested_dir.joinpath("premature_completion.traj.json").write_text(premature_text, encoding="utf-8");
+
+    external_upload_result = root spawn UploadBatch(filename="exports/external_eval_batch");
+    external_upload_data = external_upload_result.reports[0];
+    assert external_upload_data["batch_id"] == "upload-external_eval";
+    assert external_upload_data["status"] == "ready";
+    assert external_upload_data["run_count"] == 2;
+    assert external_upload_data["managed_alias_created"] == True;
+    assert "exports/external_eval_batch" in external_upload_data["source_path"];
+    assert "uploads/external_eval" in external_upload_data["managed_alias"];
+
+    external_parse_result = root spawn ParseBatch(batch_id="upload-external_eval");
+    external_parse_data = external_parse_result.reports[0];
+    assert external_parse_data["status"] == "parsed";
+    assert external_parse_data["run_count"] == 2;
+
+    external_run_result = root spawn GetRunView(run_id="premature_completion", batch_id="upload-external_eval");
+    external_run_data = external_run_result.reports[0];
+    assert "uploads/external_eval" in external_run_data["source_path"];
+}
+
+test {
     result = root spawn GetRunView(run_id="premature_completion");
     data = result.reports[0];
     assert data["status"] == "graph_backed";

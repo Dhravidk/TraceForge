@@ -159,13 +159,39 @@ def export_report_summary(root_node: any, batch_id: str) -> dict[str, any] {
         lines.append("");
     }
 
+    representative_run_ids: list[str] = [];
+    if has_highlight_run {
+        representative_run_ids.append(str(highlight_run["run_id"]));
+    }
+    for cluster in overview["clusters"] {
+        medoid_run_id = str(cluster["medoid_run_id"]);
+        if medoid_run_id and medoid_run_id not in representative_run_ids {
+            representative_run_ids.append(medoid_run_id);
+        }
+        if len(representative_run_ids) >= 6 {
+            break;
+        }
+    }
+
     lines.extend([
-        "## Runs",
+        "## Representative Runs",
+        "",
+        f"- Selected runs shown: {len(representative_run_ids)} of {overview['run_count']}",
         "",
     ]);
 
-    for run_item in overview["runs"] {
-        run_detail = run_view_summary(root_node, run_item["run_id"], batch_id);
+    for run_id in representative_run_ids {
+        run_detail = run_view_summary(root_node, run_id, batch_id);
+        if run_detail["status"] == "missing" {
+            continue;
+        }
+        run_item = {
+            "run_id": run_detail["run_id"],
+            "task_title": run_detail["task_title"],
+            "primary_failure": run_detail["primary_failure"],
+            "critical_step_idx": run_detail["critical_step_idx"],
+            "summary": run_detail["summary"],
+        };
         lines.append(f"### {run_item['run_id']}");
         lines.append("");
         lines.append(f"- Task: {run_item['task_title']}");
