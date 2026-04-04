@@ -42,6 +42,7 @@ cl {
             "summary": "",
             "failure_class": "UNKNOWN",
             "size": 0,
+            "stored_patch_count": 0,
             "recurring_signals": [],
             "representative_runs": [],
         };
@@ -49,6 +50,8 @@ cl {
             "summary": "",
             "rules": [],
             "diff_text": "",
+            "stored_in_graph": False,
+            "stored_patch_id": "",
         };
         has comparison: any = {
             "baseline": {
@@ -294,6 +297,7 @@ cl {
                     <p>{String(clusterDetail["summary"] || "")}</p>
                     <p>Failure class: {String(clusterDetail["failure_class"] || "UNKNOWN")}</p>
                     <p>Cluster size: {String(clusterDetail["size"] || 0)}</p>
+                    <p>Stored patches: {String(clusterDetail["stored_patch_count"] || 0)}</p>
                     <h3>Recurring Signals</h3>
                     <ul>
                         {[<li>{String(item)}</li> for item in recurringSignals]}
@@ -316,6 +320,8 @@ cl {
                 <article className="panel">
                     <h2>Generated AGENTS.md Patch</h2>
                     <p>{String(patchDetail["summary"] || "")}</p>
+                    <p>Stored in graph: {String(patchDetail["stored_in_graph"] || False)}</p>
+                    <p>Patch ID: {String(patchDetail["stored_patch_id"] || "")}</p>
                     <ul>
                         {[
                             <li>

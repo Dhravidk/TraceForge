@@ -39,6 +39,11 @@ test {
     data = result.reports[0];
     assert data["status"] == "deterministic_patch";
     assert "rerun at least one targeted failing test" in data["diff_text"];
+    assert data["stored_in_graph"] == True;
+
+    cluster_result = root spawn GetClusterView(cluster_id="sample-starter:premature_completion:0");
+    cluster_data = cluster_result.reports[0];
+    assert cluster_data["stored_patch_count"] >= 1;
 }
 
 test {

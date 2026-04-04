@@ -13,6 +13,7 @@ import from traceforge.graph_build {
     find_cluster_node,
     find_run_node,
     list_batch_clusters,
+    list_cluster_patches,
     list_batch_runs,
     list_run_clusters,
     list_run_hypotheses,
@@ -21,6 +22,7 @@ import from traceforge.graph_build {
     list_step_files,
     list_step_patches,
     list_step_tests,
+    remembered_cluster_patch_ids,
     run_graph_stats,
     step_kind_name
 }
@@ -126,6 +128,11 @@ def _cluster_run_nodes(batch: Batch, cluster_id: str) -> list[Run] {
 
 def _cluster_summary_from_node(batch: Batch, cluster_node: Cluster) -> dict[str, any] {
     cluster_runs = _cluster_run_nodes(batch, cluster_node.cluster_id);
+    stored_patches = list_cluster_patches(cluster_node);
+    stored_patch_ids = remembered_cluster_patch_ids(cluster_node.cluster_id);
+    if not stored_patch_ids {
+        stored_patch_ids = [patch_node.patch_id for patch_node in stored_patches];
+    }
     recurring_files_raw: list[str] = [];
     recurring_errors_raw: list[str] = [];
     recurring_tests_raw: list[str] = [];
@@ -179,6 +186,8 @@ def _cluster_summary_from_node(batch: Batch, cluster_node: Cluster) -> dict[str,
         "recurring_tests": recurring_tests,
         "summary": cluster_node.summary,
         "patch_ready": failure_label != "UNKNOWN",
+        "stored_patch_count": len(stored_patch_ids),
+        "stored_patch_ids": stored_patch_ids,
         "status": "cluster_ready",
     };
 }

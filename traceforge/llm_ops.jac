@@ -1,4 +1,9 @@
 import from traceforge.analysis { cluster_view_summary, run_view_summary }
+import from traceforge.graph_build {
+    ensure_batch_graph,
+    find_cluster_node,
+    upsert_cluster_patch
+}
 import from traceforge.schema { ClusterLabel, FailureClass, MemoryPatchProposal }
 
 def choose_failure_class(text: str) -> FailureClass by llm();
@@ -139,7 +144,7 @@ def compile_memory_patch_summary(root_node: any, cluster_id: str) -> dict[str, a
     for rule in rules {
         diff_lines.append("+- " + rule);
     }
-    return {
+    response = {
         "cluster_id": cluster_id,
         "scope": "cluster",
         "cluster_label": cluster_view["label"],
@@ -158,4 +163,29 @@ def compile_memory_patch_summary(root_node: any, cluster_id: str) -> dict[str, a
         "confidence": 0.64,
         "status": "deterministic_patch",
     };
+
+    batch_id = cluster_id.split(":")[0];
+    compiled = ensure_batch_graph(root_node, batch_id);
+    if compiled["batch"] is not None {
+        cluster_node = find_cluster_node(compiled["batch"], cluster_id);
+        if cluster_node is not None {
+            stored = upsert_cluster_patch(
+                cluster_node,
+                {
+                    "patch_id": cluster_id + ":memory_patch",
+                    "scope": "cluster",
+                    "title": str(cluster_view["label"]) + " memory patch",
+                    "diff_text": response["diff_text"],
+                    "confidence": response["confidence"],
+                },
+            );
+            response["stored_patch_id"] = stored["patch_id"];
+            response["stored_in_graph"] = True;
+            response["stored_patch_created"] = stored["created"];
+            return response;
+        }
+    }
+
+    response["stored_in_graph"] = False;
+    return response;
 }
