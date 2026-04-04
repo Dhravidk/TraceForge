@@ -17,7 +17,8 @@ include traceforge.api;
 test {
     status_result = root spawn GetStatus();
     status_data = status_result.reports[0];
-    assert status_data["phase"] == "phase_5_submission_polish";
+    assert status_data["phase"] == "phase_6_submission_packet_ready";
+    assert status_data["project"]["status"] == "submission_surface_ready";
 }
 
 test {

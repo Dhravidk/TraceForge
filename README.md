@@ -15,7 +15,7 @@ TraceForge is meant to turn those runs into something judges and users can inspe
 
 ## Current Status
 
-This repo is now past the initial scaffold and running a graph-backed Jac demo path for the starter sample batch.
+This repo is now running a submission-ready Jac demo path for sample and local upload batches.
 
 - Jac-native parsing for mini-SWE-agent sample trajectories
 - Jac-native deterministic fingerprints and failure-family scoring
@@ -30,7 +30,7 @@ This repo is now past the initial scaffold and running a graph-backed Jac demo p
 - stronger baseline-vs-structured comparison with explicit blind spots, support points, and evidence-window grounding
 - markdown batch report export that doubles as a demo and Devpost backup artifact
 
-The remaining major work is deeper typed `by llm()` synthesis, stronger baseline evidence selection, and final submission polish around the current JacHacks demo surface.
+The remaining major work is deeper typed `by llm()` synthesis and any last-mile demo recording polish. The current repo already supports the full judge-facing path: batch overview, cluster explorer, run forensics, baseline comparison, cluster diagnosis, and markdown report export.
 
 ## Repo Layout
 
@@ -77,11 +77,12 @@ This is important for JacHacks because meaningful Jac usage is part of the judgi
 ## Planned Demo Flow
 
 1. Load a sample batch of mini-SWE-agent trajectories.
-2. Parse runs into structured steps and artifacts.
-3. Compute failure-family signals and cluster similar failures.
-4. Open one representative run and highlight a critical step.
-5. Show a typed diagnosis and a generated `AGENTS.md` patch.
+2. Show failure families, top files, top errors, and cluster counts.
+3. Open one representative cluster and inspect recurring signals plus the generated `AGENTS.md` patch.
+4. Open one representative run and highlight the likely critical step.
+5. Show run diagnosis and cluster diagnosis.
 6. Compare raw-baseline analysis versus structured analysis.
+7. Export the markdown batch report as a demo fallback artifact.
 
 ## Local Run
 
@@ -134,3 +135,12 @@ The JacHacks site and participant guide emphasize:
 - and a clear 3-minute presentation.
 
 Relevant docs are kept under [docs/submission](/home/gb10/Projects/JacHacks/docs/submission).
+
+Recommended judge path:
+
+1. Start the app and open the starter batch.
+2. Show the failure-family overview and top recurring artifacts.
+3. Open the first cluster and read one recurring signal plus the generated patch.
+4. Open the medoid run and point to the highlighted critical-step window.
+5. Compare the raw baseline against the structured diagnosis.
+6. Export the batch report and show the generated markdown path as the backup artifact.
