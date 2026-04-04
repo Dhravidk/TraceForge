@@ -1,0 +1,44 @@
+{
+  "run_id": "oscillation_loop",
+  "instance_id": "demo-002",
+  "task_title": "Resolve the flaky config loader issue",
+  "metadata": {
+    "model": "starter-model",
+    "status": "failed"
+  },
+  "trajectory": [
+    {
+      "role": "assistant",
+      "content": "I will inspect the repository structure."
+    },
+    {
+      "role": "tool",
+      "content": "ls src\nls tests\ngrep -R \"config\" src"
+    },
+    {
+      "role": "assistant",
+      "content": "I will inspect the same config file again before editing."
+    },
+    {
+      "role": "tool",
+      "content": "grep -R \"config\" src\ngrep -R \"config\" src"
+    },
+    {
+      "role": "assistant",
+      "content": "I will patch config_loader.py again and rerun the same search."
+    },
+    {
+      "role": "tool",
+      "content": "apply_patch <<'PATCH'\n*** Update File: src/config_loader.py\n- old\n+ new\nPATCH\ngrep -R \"config\" src"
+    },
+    {
+      "role": "assistant",
+      "content": "I still have no progress and will submit a best effort answer."
+    },
+    {
+      "role": "tool",
+      "content": "submit final answer"
+    }
+  ]
+}
+

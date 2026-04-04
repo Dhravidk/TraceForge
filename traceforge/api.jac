@@ -1,0 +1,125 @@
+import from traceforge.__init__ { project_identity }
+import from traceforge.ingest {
+    parse_batch_summary,
+    sample_batch_summary,
+    upload_batch_summary
+}
+import from traceforge.analysis {
+    analyze_batch_summary,
+    batch_overview_summary,
+    cluster_view_summary,
+    compare_baseline_summary,
+    run_view_summary
+}
+import from traceforge.llm_ops {
+    compile_memory_patch_summary,
+    diagnose_cluster_summary,
+    diagnose_run_summary,
+    export_report_summary
+}
+
+walker :pub GetStatus {
+    can get with Root entry {
+        report {
+            "project": project_identity(),
+            "phase": "phase_0_scaffold",
+            "message": "TraceForge scaffold is ready for module-level implementation.",
+        };
+    }
+}
+
+walker :pub UploadBatch {
+    has filename: str = "";
+
+    can run with Root entry {
+        report upload_batch_summary(self.filename);
+    }
+}
+
+walker :pub LoadSampleBatch {
+    has sample_name: str = "starter";
+
+    can run with Root entry {
+        report sample_batch_summary(self.sample_name);
+    }
+}
+
+walker :pub ParseBatch {
+    has batch_id: str;
+
+    can run with Root entry {
+        report parse_batch_summary(self.batch_id);
+    }
+}
+
+walker :pub AnalyzeBatch {
+    has batch_id: str;
+
+    can run with Root entry {
+        report analyze_batch_summary(self.batch_id);
+    }
+}
+
+walker :pub GetBatchOverview {
+    has batch_id: str;
+
+    can run with Root entry {
+        report batch_overview_summary(self.batch_id);
+    }
+}
+
+walker :pub GetClusterView {
+    has cluster_id: str;
+
+    can run with Root entry {
+        report cluster_view_summary(self.cluster_id);
+    }
+}
+
+walker :pub GetRunView {
+    has run_id: str;
+
+    can run with Root entry {
+        report run_view_summary(self.run_id);
+    }
+}
+
+walker :pub DiagnoseRun {
+    has run_id: str;
+
+    can run with Root entry {
+        report diagnose_run_summary(self.run_id);
+    }
+}
+
+walker :pub DiagnoseCluster {
+    has cluster_id: str;
+
+    can run with Root entry {
+        report diagnose_cluster_summary(self.cluster_id);
+    }
+}
+
+walker :pub CompileMemoryPatch {
+    has cluster_id: str;
+
+    can run with Root entry {
+        report compile_memory_patch_summary(self.cluster_id);
+    }
+}
+
+walker :pub ExportBatchReport {
+    has batch_id: str;
+
+    can run with Root entry {
+        report export_report_summary(self.batch_id);
+    }
+}
+
+walker :pub CompareBaseline {
+    has run_id: str;
+
+    can run with Root entry {
+        report compare_baseline_summary(self.run_id);
+    }
+}

@@ -1,0 +1,43 @@
+{
+  "run_id": "successful_recovery",
+  "instance_id": "demo-004",
+  "task_title": "Repair targeted test failure in parser",
+  "metadata": {
+    "model": "starter-model",
+    "status": "resolved"
+  },
+  "trajectory": [
+    {
+      "role": "assistant",
+      "content": "I will inspect the parser failure and locate the failing test."
+    },
+    {
+      "role": "tool",
+      "content": "pytest tests/test_parser.py -q\nFAILED tests/test_parser.py::test_metadata_roundtrip"
+    },
+    {
+      "role": "assistant",
+      "content": "I will update parser.py and then rerun the failing test."
+    },
+    {
+      "role": "tool",
+      "content": "apply_patch <<'PATCH'\n*** Update File: parser.py\n- old branch\n+ fixed branch\nPATCH"
+    },
+    {
+      "role": "assistant",
+      "content": "Now I will validate the exact failing test."
+    },
+    {
+      "role": "tool",
+      "content": "pytest tests/test_parser.py::test_metadata_roundtrip -q\n1 passed"
+    },
+    {
+      "role": "assistant",
+      "content": "The issue is resolved and I can submit safely."
+    },
+    {
+      "role": "tool",
+      "content": "submit final answer"
+    }
+  ]
+}
