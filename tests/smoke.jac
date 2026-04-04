@@ -1,4 +1,5 @@
 import from pathlib { Path }
+import from zipfile { ZIP_DEFLATED, ZipFile }
 
 include traceforge.__init__;
 include traceforge.schema;
@@ -51,6 +52,35 @@ test {
     upload_run_result = root spawn GetRunView(run_id="premature_completion", batch_id="upload-local_demo");
     upload_run_data = upload_run_result.reports[0];
     assert "uploads/local_demo_batch" in upload_run_data["source_path"];
+}
+
+test {
+    archive_path = Path("uploads/local_zip_demo.zip");
+    bundle = ZipFile(str(archive_path), "w", compression=ZIP_DEFLATED);
+    bundle.write("uploads/local_demo_batch/invalid_patch.traj.json", arcname="invalid_patch.traj.json");
+    bundle.write("uploads/local_demo_batch/premature_completion.traj.json", arcname="nested/premature_completion.traj.json");
+    bundle.close();
+
+    zip_upload_result = root spawn UploadBatch(filename="local_zip_demo.zip");
+    zip_upload_data = zip_upload_result.reports[0];
+    assert zip_upload_data["batch_id"] == "upload-local_zip_demo";
+    assert zip_upload_data["status"] == "ready";
+    assert zip_upload_data["ingest_mode"] == "zip";
+    assert "local_zip_demo.zip" in zip_upload_data["resolved_archive"];
+    assert zip_upload_data["run_count"] == 2;
+
+    zip_parse_result = root spawn ParseBatch(batch_id="upload-local_zip_demo");
+    zip_parse_data = zip_parse_result.reports[0];
+    assert zip_parse_data["status"] == "parsed";
+    assert zip_parse_data["run_count"] == 2;
+
+    zip_analyze_result = root spawn AnalyzeBatch(batch_id="upload-local_zip_demo");
+    zip_analyze_data = zip_analyze_result.reports[0];
+    assert zip_analyze_data["run_count"] == 2;
+
+    zip_run_result = root spawn GetRunView(run_id="premature_completion", batch_id="upload-local_zip_demo");
+    zip_run_data = zip_run_result.reports[0];
+    assert "uploads/local_zip_demo" in zip_run_data["source_path"];
 }
 
 test {

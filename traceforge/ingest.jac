@@ -1,4 +1,5 @@
 import from pathlib { Path }
+import from zipfile { ZipFile }
 import from traceforge.parser { parse_run, path_run_stem }
 
 glob SAMPLE_ROOT: str = "demo_runs";
@@ -35,7 +36,7 @@ def _traj_files_in_dir(batch_dir: Path) -> list[str] {
     if not batch_dir.exists() or not batch_dir.is_dir() {
         return [];
     }
-    return [str(path) for path in sorted(batch_dir.glob("*.traj.json"))];
+    return [str(path) for path in sorted(batch_dir.rglob("*.traj.json")) if path.is_file()];
 }
 
 def sample_batch_path(name: str = "starter") -> str {
@@ -138,35 +139,61 @@ def _resolve_upload_dir(filename: str) -> str {
     return "";
 }
 
+def _resolve_upload_archive(filename: str) -> str {
+    direct = Path(filename);
+    candidates = [
+        direct,
+        Path(UPLOAD_ROOT) / filename,
+    ];
+    if not str(direct).lower().endswith(".zip") {
+        candidates.append(Path(str(direct) + ".zip"));
+        candidates.append(Path(UPLOAD_ROOT) / (filename + ".zip"));
+    }
+    for candidate in candidates {
+        if candidate.exists() and candidate.is_file() and str(candidate).lower().endswith(".zip") {
+            return str(candidate);
+        }
+    }
+    return "";
+}
+
+def _extract_upload_archive(archive_path: str) -> str {
+    archive = Path(archive_path);
+    target_dir = Path(UPLOAD_ROOT) / archive.stem;
+    target_dir.mkdir(parents=True, exist_ok=True);
+    zip_file = ZipFile(str(archive), "r");
+    zip_file.extractall(str(target_dir));
+    zip_file.close();
+    return str(target_dir);
+}
+
 def upload_batch_summary(filename: str = "") -> dict[str, any] {
     available = available_upload_batch_ids();
     if not filename {
         return {
             "batch_id": "",
             "status": "awaiting_folder",
-            "message": "Provide a folder name or path under uploads/ that contains *.traj.json files.",
-            "available_uploads": available,
-        };
-    }
-
-    lower = filename.lower();
-    if lower.endswith(".zip") {
-        return {
-            "batch_id": "",
-            "filename": filename,
-            "status": "unsupported_archive",
-            "message": "Zip ingestion is not implemented yet. Point UploadBatch at a local folder containing *.traj.json files.",
+            "message": "Provide a folder name, folder path, or zip archive under uploads/ that contains *.traj.json files.",
             "available_uploads": available,
         };
     }
 
     resolved = _resolve_upload_dir(filename);
+    resolved_archive = "";
+    ingest_mode = "folder";
+    if not resolved {
+        resolved_archive = _resolve_upload_archive(filename);
+        if resolved_archive {
+            resolved = _extract_upload_archive(resolved_archive);
+            ingest_mode = "zip";
+        }
+    }
     if not resolved {
         return {
             "batch_id": "",
             "filename": filename,
             "status": "missing",
-            "message": "No local upload folder with *.traj.json files was found for that name or path.",
+            "message": "No local upload folder or zip archive with *.traj.json files was found for that name or path.",
             "available_uploads": available,
         };
     }
@@ -175,6 +202,10 @@ def upload_batch_summary(filename: str = "") -> dict[str, any] {
     batch_id = "upload-" + batch_name;
     summary = _build_batch_summary(batch_id, resolved);
     summary["resolved_path"] = resolved;
+    summary["ingest_mode"] = ingest_mode;
+    if resolved_archive {
+        summary["resolved_archive"] = resolved_archive;
+    }
     summary["available_uploads"] = available_upload_batch_ids();
     return summary;
 }

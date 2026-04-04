@@ -22,6 +22,7 @@ This repo is now past the initial scaffold and running a graph-backed Jac demo p
 - graph compilation into `Batch`, `Run`, `Step`, artifact, hypothesis, and cluster nodes
 - graph-backed batch, run, cluster, diagnosis, patch, comparison, and report walkers
 - discovered batch catalog with switching between sample and local upload batches
+- local upload support for both folders and zip archives containing `*.traj.json`
 - credential-gated typed `by llm()` reasoning with deterministic fallback when no model key is present
 - Jac smoke tests for the starter demo path
 - a readable demo UI organized around batch overview, cluster explorer, run forensics, and baseline comparison
@@ -95,6 +96,7 @@ jac check main.jac
 jac test tests/smoke.jac
 jac enter main.jac GetBatchCatalog
 jac enter main.jac UploadBatch local_demo_batch
+jac enter main.jac UploadBatch local_zip_demo.zip
 jac enter main.jac ParseBatch upload-local_demo
 jac enter main.jac AnalyzeBatch upload-local_demo
 jac enter main.jac GetRunView premature_completion --batch_id upload-local_demo
@@ -108,7 +110,7 @@ jac enter main.jac CompareBaseline premature_completion
 jac enter main.jac ExportBatchReport sample-starter
 ```
 
-Local upload batches are discovered from folders under [uploads](/home/gb10/Projects/JacHacks/uploads) that contain `*.traj.json` files. The repo includes [local_demo_batch](/home/gb10/Projects/JacHacks/uploads/local_demo_batch) as a fixture for that path.
+Local upload batches are discovered from folders under [uploads](/home/gb10/Projects/JacHacks/uploads) that contain `*.traj.json` files, or from zip archives that get extracted into a top-level upload batch directory. The repo includes [local_demo_batch](/home/gb10/Projects/JacHacks/uploads/local_demo_batch) as a fixture for the folder path, and the smoke suite generates a zip fixture at runtime for the archive path.
 The demo UI now exposes a batch catalog so sample and upload batches can be browsed without changing commands.
 
 Expected project settings are in [jac.toml](/home/gb10/Projects/JacHacks/jac.toml).
