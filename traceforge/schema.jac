@@ -56,6 +56,7 @@ node Batch {
 
 node Run {
     has run_id: str;
+    has batch_id: str;
     has instance_id: str = "";
     has task_title: str = "";
     has raw_path: str = "";

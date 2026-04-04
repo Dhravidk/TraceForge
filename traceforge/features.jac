@@ -2,6 +2,11 @@ import from traceforge.parser {
     ParsedRun,
     ParsedStep,
     extract_file_tokens,
+    step_has_command,
+    step_has_error,
+    step_has_patch,
+    step_has_submit,
+    step_has_test,
     step_text,
     truncate_text,
     unique_strings
@@ -98,14 +103,6 @@ def dominant_failure_label(fingerprint: dict[str, any]) -> str {
     return best_label;
 }
 
-def _looks_like_command(text: str) -> bool {
-    lower = text.lower();
-    return any(
-        token in lower
-        for token in ["$", "python ", "pytest", "bash", "git ", "ls ", "grep ", "find ", "apply_patch"]
-    );
-}
-
 def _status_is_resolved(run: ParsedRun) -> bool {
     status = str(run.metadata.get("status") or "").lower();
     return status in {"resolved", "passed", "success", "succeeded"};
@@ -159,48 +156,50 @@ def compute_run_fingerprint(run: ParsedRun) -> dict[str, any] {
         lower = text.lower();
         fingerprint["step_kind_sequence"].append(step.kind or "OTHER");
 
-        if _looks_like_command(text) {
+        if step_has_command(step) {
             fingerprint["num_commands"] += 1;
         }
-        if any(token in lower for token in ["grep ", "ls ", "find ", "read ", "inspect"]) {
+        command_lower = str(step.command_text or "").lower();
+        if any(token in command_lower for token in ["grep ", "ls ", "find ", "read ", "inspect", "rg ", "cat ", "sed "]) {
             search_command_hits += 1;
             if step.phase == "inspect" {
                 planning_steps += 1;
             }
         }
-        if "pytest" in lower or "test" in lower {
+        if step_has_test(step) {
             fingerprint["num_tests"] += 1;
             fingerprint["did_any_test"] = True;
             if fingerprint["first_test_step"] < 0 {
                 fingerprint["first_test_step"] = idx;
             }
-            fingerprint["top_test_names"].extend(extract_file_tokens(text));
+            fingerprint["top_test_names"].extend(extract_file_tokens(step.test_text));
         }
-        if "patch" in lower or "diff" in lower or "apply_patch" in lower {
+        if step_has_patch(step) {
             fingerprint["num_patches"] += 1;
             fingerprint["did_any_edit"] = True;
             if fingerprint["first_patch_step"] < 0 {
                 fingerprint["first_patch_step"] = idx;
             }
         }
-        if "traceback" in lower or "error" in lower or "exception" in lower or "failed" in lower {
+        if step_has_error(step) {
             saw_error = True;
             if fingerprint["first_error_step"] < 0 {
                 fingerprint["first_error_step"] = idx;
             }
+            error_lower = step.error_text.lower();
             for token in ["traceback", "error", "exception", "failed", "syntaxerror", "importerror"] {
-                if token in lower {
+                if token in error_lower {
                     fingerprint["top_error_keywords"].append(token);
                 }
             }
-            if "syntaxerror" in lower or "invalid syntax" in lower {
+            if "syntaxerror" in error_lower or "invalid syntax" in error_lower {
                 fingerprint["did_any_syntax_error"] = True;
             }
-            if "importerror" in lower or "module not found" in lower {
+            if "importerror" in error_lower or "module not found" in error_lower {
                 fingerprint["did_any_import_error"] = True;
             }
             if fingerprint["first_patch_step"] >= 0 and idx >= fingerprint["first_patch_step"] {
-                if "syntaxerror" in lower or "invalid syntax" in lower or "traceback" in lower {
+                if "syntaxerror" in error_lower or "invalid syntax" in error_lower or "traceback" in error_lower {
                     syntax_error_after_patch = True;
                     fingerprint["did_any_patch_parse_fail"] = True;
                 }
@@ -209,13 +208,16 @@ def compute_run_fingerprint(run: ParsedRun) -> dict[str, any] {
         if saw_error and (" passed" in lower or lower.startswith("passed") or "resolved" in lower or "1 passed" in lower) {
             passed_after_error = True;
         }
-        if "submit" in lower or "final" in lower {
+        if step_has_submit(step) {
             if fingerprint["first_submit_step"] < 0 {
                 fingerprint["first_submit_step"] = idx;
             }
         }
-        if "returncode" in lower or "exit code" in lower or "non-zero" in lower {
+        if "returncode" in command_lower or "exit code" in command_lower or "non-zero" in command_lower or "command failed" in command_lower {
             nonzero_returns += 1;
+        }
+        if step.phase == "reason" and not step_has_command(step) and not step_has_patch(step) and not step_has_test(step) {
+            planning_steps += 1;
         }
 
         extracted = extract_file_tokens(text);
