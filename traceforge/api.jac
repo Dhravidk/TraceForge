@@ -9,8 +9,11 @@ import from traceforge.analysis {
     analyze_batch_summary,
     batch_overview_summary,
     cluster_view_summary,
-    compare_baseline_summary,
     run_view_summary
+}
+import from traceforge.eval {
+    compare_run_harness_summary,
+    export_blinded_eval_summary
 }
 import from traceforge.llm_ops {
     compile_memory_patch_summary,
@@ -23,8 +26,8 @@ walker :pub GetStatus {
     can get with Root entry {
         report {
             "project": project_identity(),
-            "phase": "phase_6_submission_packet_ready",
-            "message": "TraceForge now ships a Jac-only graph-backed demo with a submission-ready flow: batch overview, cluster explorer, run forensics, baseline comparison, cluster diagnosis, and markdown report export.",
+            "phase": "phase_7_fair_comparison_ready",
+            "message": "TraceForge now ships a Jac-only graph-backed demo with fair same-schema comparison, blinded eval export, cluster diagnosis, and markdown report export.",
         };
     }
 }
@@ -125,11 +128,21 @@ walker :pub ExportBatchReport {
     }
 }
 
+walker :pub ExportBlindedEvaluation {
+    has batch_id: str;
+    has limit: int = 10;
+    has substantive_only: bool = True;
+
+    can run with Root entry {
+        report export_blinded_eval_summary(root, self.batch_id, self.limit, self.substantive_only);
+    }
+}
+
 walker :pub CompareBaseline {
     has run_id: str;
     has batch_id: str = "";
 
     can run with Root entry {
-        report compare_baseline_summary(root, self.run_id, self.batch_id);
+        report compare_run_harness_summary(root, self.run_id, self.batch_id);
     }
 }

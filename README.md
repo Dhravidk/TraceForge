@@ -23,11 +23,13 @@ This repo is now running a submission-ready Jac demo path for sample and local u
 - graph-backed batch, run, cluster, diagnosis, patch, comparison, and report walkers
 - discovered batch catalog with switching between sample and local upload batches
 - local upload support for both folders and zip archives containing `*.traj.json`
+- external folder uploads now get managed aliases under `uploads/` so they can be analyzed through the normal batch flow
 - credential-gated typed `by llm()` reasoning with deterministic fallback when no model key is present
 - Jac smoke tests for the starter demo path
 - a readable demo UI organized around batch overview, cluster explorer, run forensics, and baseline comparison
 - live cluster diagnosis and batch-report export surfaced directly in the Jac UI
-- stronger baseline-vs-structured comparison with explicit blind spots, support points, and evidence-window grounding
+- fair same-schema raw-transcript-vs-TraceForge comparison with explicit blind spots, support points, verifier output, and evidence-window grounding
+- blinded evaluation export for side-by-side judging of raw transcript analysis versus TraceForge retrieval
 - markdown batch report export that doubles as a demo and Devpost backup artifact
 
 The remaining major work is deeper typed `by llm()` synthesis and any last-mile demo recording polish. The current repo already supports the full judge-facing path: batch overview, cluster explorer, run forensics, baseline comparison, cluster diagnosis, and markdown report export.
@@ -54,6 +56,7 @@ The remaining major work is deeper typed `by llm()` synthesis and any last-mile 
 │   ├── graph_build.jac
 │   ├── analysis.jac
 │   ├── llm_ops.jac
+│   ├── eval.jac
 │   ├── reporting.jac
 │   ├── api.jac
 │   └── ui.jac
@@ -81,8 +84,8 @@ This is important for JacHacks because meaningful Jac usage is part of the judgi
 3. Open one representative cluster and inspect recurring signals plus the generated `AGENTS.md` patch.
 4. Open one representative run and highlight the likely critical step.
 5. Show run diagnosis and cluster diagnosis.
-6. Compare raw-baseline analysis versus structured analysis.
-7. Export the markdown batch report as a demo fallback artifact.
+6. Compare a raw-transcript diagnosis versus TraceForge retrieval under the same output schema.
+7. Export the blinded evaluation sheet and markdown batch report as demo fallback artifacts.
 
 ## Local Run
 
@@ -110,10 +113,12 @@ jac enter main.jac GetRunView premature_completion
 jac enter main.jac GetClusterView sample-starter:premature_completion:0
 jac enter main.jac CompileMemoryPatch sample-starter:premature_completion:0
 jac enter main.jac CompareBaseline premature_completion
+jac enter main.jac ExportBlindedEvaluation sample-starter --limit 2
 jac enter main.jac ExportBatchReport sample-starter
 ```
 
 Local upload batches are discovered from folders under [uploads](/home/gb10/Projects/JacHacks/uploads) that contain `*.traj.json` files, or from zip archives that get extracted into a top-level upload batch directory. The repo includes [local_demo_batch](/home/gb10/Projects/JacHacks/uploads/local_demo_batch) as a fixture for the folder path, and the smoke suite generates a zip fixture at runtime for the archive path.
+If you point `UploadBatch` at an external folder outside `uploads/`, TraceForge now creates a managed alias under `uploads/` so later `ParseBatch`, `AnalyzeBatch`, and `GetRunView` calls work through a stable upload batch ID.
 The demo UI now exposes a batch catalog so sample and upload batches can be browsed without changing commands.
 
 Expected project settings are in [jac.toml](/home/gb10/Projects/JacHacks/jac.toml).
@@ -142,5 +147,5 @@ Recommended judge path:
 2. Show the failure-family overview and top recurring artifacts.
 3. Open the first cluster and read one recurring signal plus the generated patch.
 4. Open the medoid run and point to the highlighted critical-step window.
-5. Compare the raw baseline against the structured diagnosis.
-6. Export the batch report and show the generated markdown path as the backup artifact.
+5. Compare the raw transcript arm against the TraceForge retrieval arm and read the verifier verdict.
+6. Export the blinded eval sheet and batch report and show the generated markdown paths as backup artifacts.

@@ -7,6 +7,6 @@ def project_identity() -> dict[str, any] {
         "name": APP_NAME,
         "tagline": APP_TAGLINE,
         "version": APP_VERSION,
-        "status": "submission_surface_ready",
+        "status": "fair_comparison_ready",
     };
 }

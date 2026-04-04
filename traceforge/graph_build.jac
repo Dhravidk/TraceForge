@@ -43,7 +43,7 @@ import from traceforge.features {
     dominant_failure_label,
     fingerprint_to_dict
 }
-import from traceforge.clustering { build_clusters, similarity_score }
+import from traceforge.clustering { build_clusters, failure_class_label }
 import from traceforge.critical { localize_critical_step }
 
 glob GENERATED_PATCH_REGISTRY: dict[str, list[str]] = {};
@@ -366,6 +366,10 @@ def _attach_failure_hypotheses(run_node: Run, fingerprint: dict[str, any]) -> No
     }
 }
 
+def _run_detail_hydrated(run_node: Run) -> bool {
+    return bool(run_node.metadata.get("traceforge_detail_hydrated"));
+}
+
 def _attach_step_artifacts(step_node: Step, file_nodes: dict[str, any], parsed_step: any, run_id: str) -> None {
     linked_files: list[any] = [];
     for file_path in parsed_step.touched_files {
@@ -417,27 +421,7 @@ def _attach_step_artifacts(step_node: Step, file_nodes: dict[str, any], parsed_s
     }
 }
 
-def _create_run_node(batch: Batch, parsed_run: ParsedRun, order: int, file_nodes: dict[str, any]) -> dict[str, any] {
-    fingerprint = fingerprint_to_dict(compute_run_fingerprint(parsed_run));
-    primary_failure = dominant_failure_label(fingerprint);
-    critical = localize_critical_step(parsed_run, fingerprint);
-    summary = build_run_digest(parsed_run, fingerprint);
-
-    batch +>: HasRun(order=order) :+> (run_node := Run(
-        run_id=parsed_run.run_id,
-        instance_id=parsed_run.instance_id,
-        task_title=parsed_run.task_title,
-        raw_path=parsed_run.source_path,
-        metadata=parsed_run.metadata,
-        exit_status=run_status_from_text(str(parsed_run.metadata.get("status") or "")),
-        step_count=len(parsed_run.steps),
-        unique_files=int(fingerprint["num_unique_files"]),
-        fingerprint=fingerprint,
-        primary_failure=failure_class_to_enum(primary_failure),
-        critical_step_idx=int(critical["critical_step_idx"]),
-        summary=summary,
-    ));
-
+def _attach_run_steps(run_node: Run, parsed_run: ParsedRun, file_nodes: dict[str, any]) -> None {
     seen_hashes: set[str] = set();
     previous_step_node = None;
     for parsed_step in parsed_run.steps {
@@ -460,6 +444,51 @@ def _create_run_node(batch: Batch, parsed_run: ParsedRun, order: int, file_nodes
         previous_step_node = step_node;
         _attach_step_artifacts(step_node, file_nodes, parsed_step, parsed_run.run_id);
     }
+}
+
+def hydrate_run_graph(run_node: Run) -> bool {
+    if _run_detail_hydrated(run_node) {
+        return False;
+    }
+    existing_steps = list_run_steps(run_node);
+    if existing_steps {
+        metadata = dict(run_node.metadata);
+        metadata["traceforge_detail_hydrated"] = True;
+        run_node.metadata = metadata;
+        commit();
+        return False;
+    }
+    parsed_run = parse_run(run_node.raw_path, run_node.run_id);
+    _attach_run_steps(run_node, parsed_run, {});
+    metadata = dict(run_node.metadata);
+    metadata["traceforge_detail_hydrated"] = True;
+    run_node.metadata = metadata;
+    commit();
+    return True;
+}
+
+def _create_run_node(batch: Batch, parsed_run: ParsedRun, order: int) -> dict[str, any] {
+    fingerprint = fingerprint_to_dict(compute_run_fingerprint(parsed_run));
+    primary_failure = dominant_failure_label(fingerprint);
+    critical = localize_critical_step(parsed_run, fingerprint);
+    summary = build_run_digest(parsed_run, fingerprint);
+    metadata = dict(parsed_run.metadata);
+    metadata["traceforge_detail_hydrated"] = False;
+
+    batch +>: HasRun(order=order) :+> (run_node := Run(
+        run_id=parsed_run.run_id,
+        instance_id=parsed_run.instance_id,
+        task_title=parsed_run.task_title,
+        raw_path=parsed_run.source_path,
+        metadata=metadata,
+        exit_status=run_status_from_text(str(parsed_run.metadata.get("status") or "")),
+        step_count=len(parsed_run.steps),
+        unique_files=int(fingerprint["num_unique_files"]),
+        fingerprint=fingerprint,
+        primary_failure=failure_class_to_enum(primary_failure),
+        critical_step_idx=int(critical["critical_step_idx"]),
+        summary=summary,
+    ));
 
     _attach_failure_hypotheses(run_node, fingerprint);
     return {
@@ -477,6 +506,7 @@ def _attach_clusters(batch: Batch, run_records: list[dict[str, any]], batch_id: 
     clusters = build_clusters(run_records, batch_id);
     run_node_map: dict[str, any] = {};
     record_map: dict[str, dict[str, any]] = {};
+    assigned_run_ids: set[str] = set();
     for record in run_records {
         run_node_map[record["run_id"]] = record["run_node"];
         record_map[record["run_id"]] = record;
@@ -496,19 +526,49 @@ def _attach_clusters(batch: Batch, run_records: list[dict[str, any]], batch_id: 
             run_node = run_node_map[run_id];
             run_node.cluster_id = cluster["cluster_id"];
             run_node +>: InCluster() :+> cluster_node;
+            assigned_run_ids.add(run_id);
         }
 
-        for left_index=0 to left_index<len(run_ids) by left_index+=1 {
-            for right_index=left_index+1 to right_index<len(run_ids) by right_index+=1 {
-                left_id = run_ids[left_index];
-                right_id = run_ids[right_index];
-                score = similarity_score(record_map[left_id]["fingerprint"], record_map[right_id]["fingerprint"]);
-                if score <= 0.0 {
-                    continue;
-                }
-                run_node_map[left_id] +>: SimilarRun(score=score) :+> run_node_map[right_id];
-                run_node_map[right_id] +>: SimilarRun(score=score) :+> run_node_map[left_id];
+        for pair in cluster["similar_pairs"] {
+            left_id = str(pair["left_run_id"]);
+            right_id = str(pair["right_run_id"]);
+            score = float(pair["score"]);
+            if score <= 0.0 {
+                continue;
             }
+            run_node_map[left_id] +>: SimilarRun(score=score) :+> run_node_map[right_id];
+            run_node_map[right_id] +>: SimilarRun(score=score) :+> run_node_map[left_id];
+        }
+    }
+
+    unassigned_by_family: dict[str, list[dict[str, any]]] = {};
+    for record in run_records {
+        run_id = str(record["run_id"]);
+        if run_id in assigned_run_ids {
+            continue;
+        }
+        family = str(record["primary_failure"] or "UNKNOWN");
+        if family not in unassigned_by_family {
+            unassigned_by_family[family] = [];
+        }
+        unassigned_by_family[family].append(record);
+    }
+
+    for family in unassigned_by_family {
+        family_records = unassigned_by_family[family];
+        fallback_cluster_id = f"{batch_id}:{family.lower()}:fallback";
+        fallback_cluster = Cluster(
+            cluster_id=fallback_cluster_id,
+            label=failure_class_label(family) + " fallback",
+            failure_class=failure_class_to_enum(family),
+            size=len(family_records),
+            medoid_run_id=str(family_records[0]["run_id"]),
+            summary=f"{failure_class_label(family)} fallback cluster with {len(family_records)} run(s).",
+        );
+        for record in family_records {
+            run_node = record["run_node"];
+            run_node.cluster_id = fallback_cluster_id;
+            run_node +>: InCluster() :+> fallback_cluster;
         }
     }
 }
@@ -540,11 +600,10 @@ def ensure_batch_graph(root_node: any, target_batch_id: str) -> dict[str, any] {
         run_count=int(batch_meta["run_count"]),
     ));
 
-    file_nodes: dict[str, any] = {};
     run_records: list[dict[str, any]] = [];
     for (order, path) in enumerate(batch_files(target_batch_id)) {
         parsed_run = parse_run(path);
-        run_records.append(_create_run_node(batch, parsed_run, order, file_nodes));
+        run_records.append(_create_run_node(batch, parsed_run, order));
     }
     _attach_clusters(batch, run_records, target_batch_id);
     commit();

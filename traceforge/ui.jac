@@ -4,6 +4,7 @@ sv import from traceforge.api {
     CompileMemoryPatch,
     DiagnoseCluster,
     DiagnoseRun,
+    ExportBlindedEvaluation,
     ExportBatchReport,
     GetBatchCatalog,
     GetBatchOverview,
@@ -19,6 +20,7 @@ cl {
         has loadingRun: bool = False;
         has loadingCluster: bool = False;
         has loadingReport: bool = False;
+        has loadingEval: bool = False;
         has selectedBatchId: str = "";
         has selectedRunId: str = "";
         has selectedClusterId: str = "";
@@ -95,6 +97,15 @@ cl {
             "run_count": 0,
             "cluster_count": 0,
         };
+        has evalDetail: any = {
+            "status": "idle",
+            "blind_sheet_path": "",
+            "blind_key_path": "",
+            "summary_json_path": "",
+            "selected_run_count": 0,
+            "comparison_mode": "",
+            "preview": "",
+        };
 
         async def load_run(runId: str, batchId: str = "") -> None {
             if not runId {
@@ -166,6 +177,22 @@ cl {
             loadingReport = False;
         }
 
+        async def export_blinded_eval(batchId: str) -> None {
+            if not batchId {
+                return;
+            }
+            loadingEval = True;
+            status = "Exporting blinded evaluation for " + batchId + "...";
+
+            eval_result = root spawn ExportBlindedEvaluation(batch_id=batchId);
+            if eval_result.reports {
+                evalDetail = eval_result.reports[0];
+            }
+
+            status = "Exported blinded evaluation for " + batchId + ".";
+            loadingEval = False;
+        }
+
         async def load_batch(batchId: str) -> None {
             if not batchId {
                 return;
@@ -180,6 +207,15 @@ cl {
                 "preview": "",
                 "run_count": 0,
                 "cluster_count": 0,
+            };
+            evalDetail = {
+                "status": "idle",
+                "blind_sheet_path": "",
+                "blind_key_path": "",
+                "summary_json_path": "",
+                "selected_run_count": 0,
+                "comparison_mode": "",
+                "preview": "",
             };
             status = "Loading batch " + batchId + "...";
 
@@ -286,6 +322,12 @@ cl {
         } elif reportDetail["status"] == "exported" {
             reportStatusText = "Report ready at " + String(reportDetail["path"]);
         }
+        evalStatusText = "Blinded evaluation export idle.";
+        if loadingEval {
+            evalStatusText = "Exporting blinded evaluation...";
+        } elif evalDetail["status"] == "exported" {
+            evalStatusText = "Blinded evaluation ready at " + String(evalDetail["blind_sheet_path"]);
+        }
 
         if loading {
             return <main className="shell">
@@ -332,7 +374,7 @@ cl {
                         <li>Choose a batch and compile its graph-backed overview.</li>
                         <li>Open a recurring failure cluster and inspect the medoid and recurring signals.</li>
                         <li>Open a failed run and highlight the likely first irreversible step.</li>
-                        <li>Compare raw compressed analysis against structured evidence-pack reasoning.</li>
+                        <li>Compare a same-schema raw transcript diagnosis against TraceForge retrieval plus exact evidence spans.</li>
                         <li>Export the batch report and keep the markdown artifact as a demo fallback.</li>
                     </ol>
                 </article>
@@ -551,12 +593,30 @@ cl {
                         <pre>{String(reportDetail["preview"] || "")}</pre>
                     </details>
                 </article>
+
+                <article className="panel">
+                    <h2>Submission Artifact: Blinded Eval</h2>
+                    <p>{evalStatusText}</p>
+                    <p>Export a same-model A/B sheet so TraceForge can be judged fairly against a raw-transcript baseline.</p>
+                    <button onClick={lambda e: any -> None { export_blinded_eval(String(selectedBatchId)); }}>
+                        Export {String(selectedBatchId || "batch")} blinded eval
+                    </button>
+                    <p>Sheet: {String(evalDetail["blind_sheet_path"] || "")}</p>
+                    <p>Key: {String(evalDetail["blind_key_path"] || "")}</p>
+                    <p>Summary: {String(evalDetail["summary_json_path"] || "")}</p>
+                    <p>Runs: {String(evalDetail["selected_run_count"] || 0)} | Mode: {String(evalDetail["comparison_mode"] || "")}</p>
+                    <details>
+                        <summary>Blinded Eval Preview</summary>
+                        <pre>{String(evalDetail["preview"] || "")}</pre>
+                    </details>
+                </article>
             </section>
 
             <section className="panels">
                 <article className="panel">
                     <h2>Screen 4: Raw Baseline</h2>
-                    <h3>Raw Baseline</h3>
+                    <h3>Raw Transcript Baseline</h3>
+                    <p>Mode: {String(comparison["baseline"]["mode"] || "")}</p>
                     <p>{String(comparison["baseline"]["diagnosis"] || "")}</p>
                     <p>Specificity: {String(comparison["baseline"]["specificity"] || "")}</p>
                     <p>Estimated input size: {String(comparison["baseline"]["pack_token_estimate"] || 0)} tokens</p>
@@ -569,6 +629,8 @@ cl {
 
                 <article className="panel">
                     <h2>Screen 4: Structured Diagnosis</h2>
+                    <p>Comparison mode: {String(comparison["comparison_mode"] || "")}</p>
+                    <p>Mode: {String(comparison["structured"]["mode"] || "")}</p>
                     <p>Failure class: {String(comparison["structured"]["failure_class"] || "UNKNOWN")}</p>
                     <p>Critical step: {String(comparison["structured"]["critical_step_idx"] || -1)}</p>
                     <p>Specificity: {String(comparison["structured"]["specificity"] || "")}</p>
@@ -587,6 +649,9 @@ cl {
                             for item in structuredWindow
                         ]}
                     </ol>
+                    <h3>Verifier</h3>
+                    <p>Winner: {String(comparison["verifier"]["winner"] || "tie")}</p>
+                    <p>{String(comparison["verifier"]["rationale"] || "")}</p>
                 </article>
             </section>
         </main>;

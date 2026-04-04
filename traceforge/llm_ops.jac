@@ -7,7 +7,7 @@ import from traceforge.graph_build {
     upsert_cluster_patch
 }
 import from traceforge.parser { truncate_text }
-import from traceforge.schema { ClusterLabel, FailureClass, MemoryPatchProposal }
+import from traceforge.schema { ClusterLabel, ComparisonVerdict, FailureClass, MemoryPatchProposal, RunDiagnosis }
 
 def choose_failure_class(text: str) -> FailureClass by llm();
 
@@ -15,11 +15,15 @@ def draft_cluster_label(text: str) -> ClusterLabel by llm();
 
 def draft_memory_patch(text: str) -> MemoryPatchProposal by llm();
 
+def propose_run_diagnosis(text: str) -> RunDiagnosis by llm();
+
+def compare_run_diagnoses(text: str) -> ComparisonVerdict by llm();
+
 def llm_enabled() -> bool {
     return str(getenv("OPENAI_API_KEY") or "") != "";
 }
 
-def _diagnosis_reason(failure_class: str) -> str {
+def diagnosis_reason(failure_class: str) -> str {
     reasons = {
         "PREMATURE_COMPLETION": "the run moved to submission before validating that the failing state had recovered",
         "INVALID_PATCH": "the patch introduced or preserved a syntax-level failure that the run never repaired",
@@ -33,7 +37,7 @@ def _diagnosis_reason(failure_class: str) -> str {
     return reasons.get(failure_class, reasons["UNKNOWN"]);
 }
 
-def _cluster_rule_lines(failure_class: str) -> list[str] {
+def cluster_rule_lines(failure_class: str) -> list[str] {
     if failure_class == "PREMATURE_COMPLETION" {
         return [
             "Before submitting, rerun at least one targeted failing test if any test failed earlier.",
@@ -146,7 +150,7 @@ def _deterministic_diagnosis(run_view: dict[str, any]) -> dict[str, any] {
         "run_id": run_view["run_id"],
         "failure_class": failure_class,
         "critical_step_idx": run_view["critical_step_idx"],
-        "irreversible_because": _diagnosis_reason(failure_class),
+        "irreversible_because": diagnosis_reason(failure_class),
         "evidence": evidence,
         "confidence": 0.68 if run_view["critical_step_idx"] >= 0 else 0.2,
         "status": "deterministic_diagnosis",
@@ -169,7 +173,7 @@ def _deterministic_cluster_label(cluster_view: dict[str, any]) -> dict[str, any]
 }
 
 def _deterministic_patch(cluster_view: dict[str, any]) -> dict[str, any] {
-    rules = _cluster_rule_lines(str(cluster_view["failure_class"]));
+    rules = cluster_rule_lines(str(cluster_view["failure_class"]));
     diff_lines = [
         "--- AGENTS.md",
         "+++ AGENTS.md",
@@ -187,7 +191,7 @@ def _deterministic_patch(cluster_view: dict[str, any]) -> dict[str, any] {
         "rules": [
             {
                 "title": str(cluster_view["label"]) + " rule " + str(index + 1),
-                "rationale": _diagnosis_reason(str(cluster_view["failure_class"])),
+                "rationale": diagnosis_reason(str(cluster_view["failure_class"])),
                 "rule_text": rule,
                 "supported_by_steps": [],
                 "confidence": 0.64,
@@ -250,7 +254,7 @@ def diagnose_run_summary(root_node: any, run_id: str, batch_id: str = "") -> dic
             "run_id": fallback["run_id"],
             "failure_class": predicted_name,
             "critical_step_idx": fallback["critical_step_idx"],
-            "irreversible_because": _diagnosis_reason(predicted_name),
+            "irreversible_because": diagnosis_reason(predicted_name),
             "evidence": fallback["evidence"],
             "confidence": 0.8 if fallback["critical_step_idx"] >= 0 else 0.35,
             "status": "llm_validated_diagnosis",

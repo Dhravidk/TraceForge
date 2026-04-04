@@ -139,6 +139,50 @@ def _resolve_upload_dir(filename: str) -> str {
     return "";
 }
 
+def _path_under_upload_root(path: str) -> bool {
+    try {
+        return str(Path(path).resolve()).startswith(str(Path(UPLOAD_ROOT).resolve()));
+    } except Exception {
+        return False;
+    }
+}
+
+def _managed_upload_alias_name(path: str) -> str {
+    return _normalize_batch_name(Path(path).name);
+}
+
+def _ensure_managed_upload_dir(path: str) -> dict[str, str] {
+    resolved_path = str(Path(path).resolve());
+    if _path_under_upload_root(resolved_path) {
+        return {
+            "resolved_path": resolved_path,
+            "managed_path": path,
+            "managed_name": _managed_upload_alias_name(path),
+            "managed": "false",
+        };
+    }
+
+    root_dir = Path(UPLOAD_ROOT);
+    root_dir.mkdir(parents=True, exist_ok=True);
+    base_name = _managed_upload_alias_name(resolved_path);
+    candidate = root_dir / base_name;
+    suffix = 2;
+    while candidate.exists() and not str(candidate.resolve()) == resolved_path {
+        candidate = root_dir / (base_name + "_" + str(suffix));
+        suffix += 1;
+    }
+
+    if not candidate.exists() {
+        candidate.symlink_to(resolved_path, target_is_directory=True);
+    }
+    return {
+        "resolved_path": resolved_path,
+        "managed_path": str(candidate),
+        "managed_name": _normalize_batch_name(candidate.name),
+        "managed": "true",
+    };
+}
+
 def _resolve_upload_archive(filename: str) -> str {
     direct = Path(filename);
     candidates = [
@@ -198,10 +242,14 @@ def upload_batch_summary(filename: str = "") -> dict[str, any] {
         };
     }
 
-    batch_name = _normalize_batch_name(Path(resolved).name);
+    managed = _ensure_managed_upload_dir(resolved);
+    batch_name = managed["managed_name"];
     batch_id = "upload-" + batch_name;
-    summary = _build_batch_summary(batch_id, resolved);
-    summary["resolved_path"] = resolved;
+    summary = _build_batch_summary(batch_id, managed["managed_path"]);
+    summary["resolved_path"] = managed["managed_path"];
+    summary["source_path"] = managed["resolved_path"];
+    summary["managed_alias"] = managed["managed_path"];
+    summary["managed_alias_created"] = managed["managed"] == "true";
     summary["ingest_mode"] = ingest_mode;
     if resolved_archive {
         summary["resolved_archive"] = resolved_archive;
