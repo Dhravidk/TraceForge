@@ -3,6 +3,7 @@ sv import from traceforge.api {
     CompareBaseline,
     CompileMemoryPatch,
     DiagnoseRun,
+    GetBatchCatalog,
     GetBatchOverview,
     GetClusterView,
     GetRunView
@@ -12,10 +13,16 @@ cl {
     def:pub app() -> JsxElement {
         has status: str = "Booting TraceForge...";
         has loading: bool = True;
+        has loadingBatch: bool = False;
         has loadingRun: bool = False;
         has loadingCluster: bool = False;
+        has selectedBatchId: str = "";
         has selectedRunId: str = "";
         has selectedClusterId: str = "";
+        has batchCatalog: any = {
+            "batches": [],
+            "batch_count": 0,
+        };
         has overview: any = {
             "family_counts": {},
             "clusters": [],
@@ -72,7 +79,7 @@ cl {
             "confidence": 0.0,
         };
 
-        async def load_run(runId: str) -> None {
+        async def load_run(runId: str, batchId: str = "") -> None {
             if not runId {
                 return;
             }
@@ -80,17 +87,17 @@ cl {
             loadingRun = True;
             status = "Loading run " + runId + "...";
 
-            run_result = root spawn GetRunView(run_id=runId);
+            run_result = root spawn GetRunView(run_id=runId, batch_id=batchId);
             if run_result.reports {
                 runDetail = run_result.reports[0];
             }
 
-            diagnosis_result = root spawn DiagnoseRun(run_id=runId);
+            diagnosis_result = root spawn DiagnoseRun(run_id=runId, batch_id=batchId);
             if diagnosis_result.reports {
                 diagnosis = diagnosis_result.reports[0];
             }
 
-            compare_result = root spawn CompareBaseline(run_id=runId);
+            compare_result = root spawn CompareBaseline(run_id=runId, batch_id=batchId);
             if compare_result.reports {
                 comparison = compare_result.reports[0];
             }
@@ -121,20 +128,29 @@ cl {
             loadingCluster = False;
         }
 
-        async can with entry {
-            analyze = root spawn AnalyzeBatch(batch_id="sample-starter");
+        async def load_batch(batchId: str) -> None {
+            if not batchId {
+                return;
+            }
+            selectedBatchId = batchId;
+            selectedRunId = "";
+            selectedClusterId = "";
+            loadingBatch = True;
+            status = "Loading batch " + batchId + "...";
+
+            analyze = root spawn AnalyzeBatch(batch_id=batchId);
             if analyze.reports {
                 status = String(analyze.reports[0]["message"]);
             }
 
-            overview_result = root spawn GetBatchOverview(batch_id="sample-starter");
+            overview_result = root spawn GetBatchOverview(batch_id=batchId);
             if overview_result.reports {
                 overview = overview_result.reports[0];
             }
 
             if overview["runs"].length > 0 {
                 first_run_id = String(overview["runs"][0]["run_id"]);
-                load_run(first_run_id);
+                load_run(first_run_id, batchId);
             }
 
             if overview["clusters"].length > 0 {
@@ -142,10 +158,26 @@ cl {
                 load_cluster(first_cluster_id);
             }
 
-            status = "Starter batch loaded through graph-backed walkers.";
+            status = "Showing batch " + batchId + ".";
+            loadingBatch = False;
+        }
+
+        async can with entry {
+            catalog_result = root spawn GetBatchCatalog();
+            if catalog_result.reports {
+                batchCatalog = catalog_result.reports[0];
+            }
+
+            if batchCatalog["batches"].length > 0 {
+                first_batch_id = String(batchCatalog["batches"][0]["batch_id"]);
+                load_batch(first_batch_id);
+            }
+
+            status = "Batch catalog loaded through graph-backed walkers.";
             loading = False;
         }
 
+        catalogEntries = batchCatalog["batches"] || [];
         familyRows = Object.entries(overview["family_counts"]);
         topFiles = overview["top_files"];
         topErrors = overview["top_errors"];
@@ -167,6 +199,10 @@ cl {
         if loadingCluster {
             clusterStatusText = "Refreshing cluster details...";
         }
+        batchStatusText = "Batch overview ready.";
+        if loadingBatch {
+            batchStatusText = "Refreshing batch overview...";
+        }
 
         if loading {
             return <main className="shell">
@@ -186,11 +222,28 @@ cl {
                 <p className="tagline">Batch failure compiler for coding-agent trajectories.</p>
                 <p className="status">{status}</p>
                 <p className="status">
-                    Batch size: {String(overview["run_count"])} | Cluster count: {String(overview["cluster_count"])}
+                    Active batch: {String(selectedBatchId || "none")} | Batch size: {String(overview["run_count"])} | Cluster count: {String(overview["cluster_count"])}
                 </p>
             </section>
 
             <section className="panels">
+                <article className="panel">
+                    <h2>Batch Catalog</h2>
+                    <p>{batchStatusText}</p>
+                    <ul>
+                        {[
+                            <li>
+                                <button onClick={lambda e: any -> None { load_batch(String(batch["batch_id"])); }}>
+                                    Open {String(batch["batch_id"])}
+                                </button>
+                                <strong>{String(batch["name"])}</strong> | {String(batch["kind"])} | runs {String(batch["run_count"])}
+                                <div>{String(batch["path"])}</div>
+                            </li>
+                            for batch in catalogEntries
+                        ]}
+                    </ul>
+                </article>
+
                 <article className="panel">
                     <h2>Failure Families</h2>
                     <ul>
@@ -229,7 +282,7 @@ cl {
                     <ul>
                         {[
                             <li>
-                                <button onClick={lambda e: any -> None { load_run(String(run["run_id"])); }}>
+                                <button onClick={lambda e: any -> None { load_run(String(run["run_id"]), String(selectedBatchId)); }}>
                                     Open {String(run["run_id"])}
                                 </button>
                                 <strong>{String(run["run_id"])}</strong> | {String(run["primary_failure"])} | critical step {String(run["critical_step_idx"])}
@@ -306,7 +359,7 @@ cl {
                     <ul>
                         {[
                             <li>
-                                <button onClick={lambda e: any -> None { load_run(String(item["run_id"])); }}>
+                                <button onClick={lambda e: any -> None { load_run(String(item["run_id"]), String(selectedBatchId)); }}>
                                     Load run
                                 </button>
                                 <strong>{String(item["run_id"])}</strong> | critical step {String(item["critical_step_idx"])}

@@ -1,4 +1,5 @@
 import from traceforge.ingest {
+    batch_files,
     batch_id_for_run,
     run_source_path
 }
@@ -26,7 +27,38 @@ import from traceforge.graph_build {
     step_kind_name
 }
 
-def _ensure_graph_for_run(root_node: any, run_id: str) -> any {
+def _run_exists_in_batch(batch_id: str, run_id: str) -> bool {
+    for path in batch_files(batch_id) {
+        if path.endswith("/" + run_id + ".traj.json") or path.endswith("\\" + run_id + ".traj.json") or path.endswith(run_id + ".traj.json") {
+            return True;
+        }
+    }
+    return False;
+}
+
+def _ensure_graph_for_run(root_node: any, run_id: str, batch_id: str = "") -> any {
+    if batch_id {
+        batch_node = find_batch_node(root_node, batch_id);
+        if batch_node is not None {
+            for scoped_run in list_batch_runs(batch_node) {
+                if scoped_run.run_id == run_id {
+                    return scoped_run;
+                }
+            }
+        }
+        if _run_exists_in_batch(batch_id, run_id) {
+            ensure_batch_graph(root_node, batch_id);
+            batch_node = find_batch_node(root_node, batch_id);
+            if batch_node is not None {
+                for scoped_run in list_batch_runs(batch_node) {
+                    if scoped_run.run_id == run_id {
+                        return scoped_run;
+                    }
+                }
+            }
+        }
+    }
+
     run_node = find_run_node(root_node, run_id);
     if run_node is not None {
         return run_node;
@@ -306,8 +338,8 @@ def cluster_view_summary(root_node: any, cluster_id: str) -> dict[str, any] {
     return _cluster_summary_from_node(batch, cluster_node);
 }
 
-def run_view_summary(root_node: any, run_id: str) -> dict[str, any] {
-    run_node = _ensure_graph_for_run(root_node, run_id);
+def run_view_summary(root_node: any, run_id: str, batch_id: str = "") -> dict[str, any] {
+    run_node = _ensure_graph_for_run(root_node, run_id, batch_id);
     if run_node is None {
         return {
             "run_id": run_id,
@@ -321,8 +353,8 @@ def run_view_summary(root_node: any, run_id: str) -> dict[str, any] {
     return _run_summary_from_node(run_node);
 }
 
-def compare_baseline_summary(root_node: any, run_id: str) -> dict[str, any] {
-    run_view = run_view_summary(root_node, run_id);
+def compare_baseline_summary(root_node: any, run_id: str, batch_id: str = "") -> dict[str, any] {
+    run_view = run_view_summary(root_node, run_id, batch_id);
     if run_view["status"] == "stub" {
         return {
             "run_id": run_id,

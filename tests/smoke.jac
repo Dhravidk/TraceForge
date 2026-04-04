@@ -19,6 +19,11 @@ test {
 }
 
 test {
+    catalog_result = root spawn GetBatchCatalog();
+    catalog_data = catalog_result.reports[0];
+    assert catalog_data["status"] == "ready";
+    assert catalog_data["batch_count"] >= 2;
+
     upload_result = root spawn UploadBatch(filename="local_demo_batch");
     upload_data = upload_result.reports[0];
     assert upload_data["batch_id"] == "upload-local_demo";
@@ -34,6 +39,10 @@ test {
     analyze_data = analyze_result.reports[0];
     assert analyze_data["run_count"] == 2;
     assert analyze_data["cluster_count"] >= 1;
+
+    upload_run_result = root spawn GetRunView(run_id="premature_completion", batch_id="upload-local_demo");
+    upload_run_data = upload_run_result.reports[0];
+    assert "uploads/local_demo_batch" in upload_run_data["source_path"];
 }
 
 test {

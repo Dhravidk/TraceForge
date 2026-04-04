@@ -193,6 +193,29 @@ def batch_summary(batch_id: str) -> dict[str, any] {
     };
 }
 
+def batch_catalog_summary() -> dict[str, any] {
+    entries: list[dict[str, any]] = [];
+    for batch_id in all_known_batch_ids() {
+        summary = batch_summary(batch_id);
+        entries.append(
+            {
+                "batch_id": summary["batch_id"],
+                "name": summary["name"],
+                "source_format": summary["source_format"],
+                "run_count": summary["run_count"],
+                "status": summary["status"],
+                "path": summary.get("resolved_path") or summary.get("sample_path") or "",
+                "kind": _batch_kind(batch_id),
+            }
+        );
+    }
+    return {
+        "status": "ready" if entries else "missing",
+        "batches": entries,
+        "batch_count": len(entries),
+    };
+}
+
 def parse_batch_summary(batch_id: str) -> dict[str, any] {
     files = batch_files(batch_id);
     if files {

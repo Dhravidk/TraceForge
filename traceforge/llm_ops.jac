@@ -75,8 +75,8 @@ def _cluster_rule_lines(failure_class: str) -> list[str] {
     ];
 }
 
-def diagnose_run_summary(root_node: any, run_id: str) -> dict[str, any] {
-    run_view = run_view_summary(root_node, run_id);
+def diagnose_run_summary(root_node: any, run_id: str, batch_id: str = "") -> dict[str, any] {
+    run_view = run_view_summary(root_node, run_id, batch_id);
     if run_view["status"] == "stub" {
         return {
             "run_id": run_id,
