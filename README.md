@@ -243,13 +243,17 @@ Explicit provider runs now namespace their eval artifacts so deterministic, API,
 
 Developer-only Jac entrypoints still exist underneath the wrapper, but they are now the internal API layer rather than the recommended operator interface.
 
-After exporting the gold worksheet and filling it in, the underlying rigorous scoring entrypoint remains available through Jac:
+After exporting the gold worksheet and filling it in, the supported operator path for rigorous scoring is the CLI:
 
 ```bash
-jac enter main.jac ScoreRigorousEvaluation \
-  --comparison_json_path exports/evals/sample-starter_comparison.json \
-  --annotation_path exports/evals/sample-starter_gold_template.json
+traceforge export-eval \
+  --batch sample-starter \
+  --kind rigorous \
+  --provider openai \
+  --annotation-path exports/evals/sample-starter_gold_template.json
 ```
+
+The lower-level scoring helper still lives in [eval.jac](/home/gb10/Projects/JacHacks/traceforge/eval.jac), but it is not exposed as a public CLI subcommand beyond `export-eval --kind rigorous`.
 
 Local upload batches are discovered from folders under [uploads](/home/gb10/Projects/JacHacks/uploads) that contain `*.traj.json` files, or from zip archives that get extracted into a top-level upload batch directory. The repo includes [local_demo_batch](/home/gb10/Projects/JacHacks/uploads/local_demo_batch) as a fixture for the folder path, and the smoke suite generates a zip fixture at runtime for the archive path.
 If you point `UploadBatch` at an external folder outside `uploads/`, TraceForge now creates a managed alias under `uploads/` so later `ParseBatch`, `AnalyzeBatch`, and `GetRunView` calls work through a stable upload batch ID.

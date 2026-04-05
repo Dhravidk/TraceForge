@@ -26,6 +26,8 @@ If you want the terminal session and all artifacts prepared in one step:
 traceforge demo --batch sample-starter --run premature_completion
 ```
 
+This is best treated as an artifact-prep command, not the default live-demo path. It can take noticeably longer than the stepped workflow because it analyzes the batch, writes both packs, runs compare, and copies the report in one shot.
+
 For a live-provider demo bundle when Codex is healthy:
 
 ```bash
