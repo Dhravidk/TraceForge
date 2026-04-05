@@ -1,15 +1,10 @@
-#!/usr/bin/env python3
+#!/usr/bin/env bash
+set -euo pipefail
 
-from pathlib import Path
-import sys
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+if [[ -x "$ROOT/.venv/bin/jac" ]]; then
+  exec "$ROOT/.venv/bin/jac" run "$ROOT/traceforge/cli.jac" "$@"
+fi
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-from traceforge.cli import main
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+exec jac run "$ROOT/traceforge/cli.jac" "$@"

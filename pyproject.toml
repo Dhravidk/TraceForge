@@ -16,3 +16,6 @@ traceforge = "traceforge.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["traceforge*"]
+
+[tool.setuptools.package-data]
+traceforge = ["*.jac"]

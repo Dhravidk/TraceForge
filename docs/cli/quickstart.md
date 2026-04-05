@@ -33,7 +33,7 @@ traceforge demo --batch sample-starter --run premature_completion
 If you prefer not to install the package entrypoint yet, the repo-local wrapper still works:
 
 ```bash
-python3 scripts/traceforge doctor
+./scripts/traceforge doctor
 ```
 
 ## Why this workflow matters

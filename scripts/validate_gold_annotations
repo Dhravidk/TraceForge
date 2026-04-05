@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+if [[ -x "$ROOT/.venv/bin/jac" ]]; then
+  exec "$ROOT/.venv/bin/jac" run "$ROOT/scripts/validate_gold_annotations.jac" "$@"
+fi
+
+exec jac run "$ROOT/scripts/validate_gold_annotations.jac" "$@"

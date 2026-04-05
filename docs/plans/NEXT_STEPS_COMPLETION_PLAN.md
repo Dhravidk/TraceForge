@@ -217,9 +217,10 @@ Ship a first-party `traceforge` entrypoint so users no longer operate the produc
 - `main.jac`
 - [api.jac](/home/gb10/Projects/JacHacks/traceforge/api.jac)
 - [eval.jac](/home/gb10/Projects/JacHacks/traceforge/eval.jac)
-- [provider_config.py](/home/gb10/Projects/JacHacks/traceforge/provider_config.py)
+- [provider_config.jac](/home/gb10/Projects/JacHacks/traceforge/provider_config.jac)
 - new wrapper files such as:
-  - `traceforge/cli.py`
+  - `traceforge/cli.jac`
+  - `traceforge/cli.py` packaging shim
   - `scripts/traceforge`
   - package entrypoint metadata
 
@@ -582,7 +583,8 @@ The following ownership should be observed during implementation.
 
 ### Worker A-owned files
 
-- new `traceforge/cli.py`
+- new `traceforge/cli.jac`
+- thin `traceforge/cli.py` packaging shim
 - new `scripts/traceforge`
 - new CLI formatting helpers
 
@@ -594,7 +596,7 @@ The following ownership should be observed during implementation.
 
 ### Worker C-owned files
 
-- [provider_config.py](/home/gb10/Projects/JacHacks/traceforge/provider_config.py)
+- [provider_config.jac](/home/gb10/Projects/JacHacks/traceforge/provider_config.jac)
 - [api.jac](/home/gb10/Projects/JacHacks/traceforge/api.jac)
 - provider-related slices of [eval.jac](/home/gb10/Projects/JacHacks/traceforge/eval.jac)
 

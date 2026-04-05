@@ -10,6 +10,7 @@ include traceforge.analysis;
 include traceforge.llm_ops;
 include traceforge.eval;
 include traceforge.reporting;
+include traceforge.provider_config;
 include traceforge.api;
 include traceforge.ui;
 

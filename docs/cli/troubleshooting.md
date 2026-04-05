@@ -84,7 +84,7 @@ traceforge doctor
 If you do not want to install the package entrypoint yet, the repo-local wrapper also works:
 
 ```bash
-python3 scripts/traceforge doctor
+./scripts/traceforge doctor
 ```
 
 ## My own batch did not behave the way I expected

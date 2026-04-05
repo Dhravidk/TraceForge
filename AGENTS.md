@@ -19,7 +19,7 @@ traceforge doctor
 If the package entrypoint is not installed yet, the repo-local wrapper also works:
 
 ```bash
-python3 scripts/traceforge doctor
+./scripts/traceforge doctor
 ```
 
 ## Preferred sample workflow
