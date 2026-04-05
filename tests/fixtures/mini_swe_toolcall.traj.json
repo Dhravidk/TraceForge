@@ -1,0 +1,61 @@
+{
+  "info": {
+    "exit_status": "Submitted",
+    "submission": "diff --git a/example.py b/example.py\n--- a/example.py\n+++ b/example.py\n@@ -1 +1 @@\n-print('broken')\n+print('fixed')\n",
+    "model_stats": {
+      "instance_cost": 0.125,
+      "api_calls": 7
+    },
+    "mini_version": "1.13.3"
+  },
+  "trajectory_format": "mini-swe-agent-1",
+  "instance_id": "mini_swe_toolcall",
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are a software engineer working in a Linux container."
+    },
+    {
+      "role": "user",
+      "content": "Task: fix the broken example."
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: inspect the failing command.",
+      "tool_calls": [
+        {
+          "id": "call_1",
+          "type": "function",
+          "function": {
+            "name": "shell",
+            "arguments": "{\"command\":\"python example.py\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "name": "shell",
+      "tool_call_id": "call_1",
+      "content": "Observation: Traceback (most recent call last): ModuleNotFoundError"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: submit the fix.",
+      "tool_calls": [
+        {
+          "id": "call_2",
+          "type": "function",
+          "function": {
+            "name": "shell",
+            "arguments": "{\"command\":\"submit_patch\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": "Observation: Patch submitted successfully."
+    }
+  ]
+}

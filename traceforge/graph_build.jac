@@ -129,7 +129,43 @@ def run_status_from_text(status_text: str) -> RunStatus {
     if lower in {"failed", "error", "error_exit"} {
         return RunStatus.ERROR_EXIT;
     }
+    if "error" in lower or "exception" in lower or "retry" in lower or "traceback" in lower or "process" in lower {
+        return RunStatus.ERROR_EXIT;
+    }
     return RunStatus.UNKNOWN;
+}
+
+def _int_metadata_value(metadata: dict[str, any], key: str, fallback: int = 0) -> int {
+    value = metadata.get(key);
+    if value is None {
+        return fallback;
+    }
+    if isinstance(value, int) {
+        return value;
+    }
+    try {
+        return int(float(str(value)));
+    } except Exception {
+        return fallback;
+    }
+}
+
+def _float_metadata_value(metadata: dict[str, any], key: str, fallback: float = 0.0) -> float {
+    value = metadata.get(key);
+    if value is None {
+        return fallback;
+    }
+    if isinstance(value, float) {
+        return value;
+    }
+    if isinstance(value, int) {
+        return float(value);
+    }
+    try {
+        return float(str(value));
+    } except Exception {
+        return fallback;
+    }
 }
 
 def run_status_name(value: RunStatus) -> str {
@@ -527,7 +563,9 @@ def _create_run_node(batch: Batch, parsed_run: ParsedRun, order: int) -> dict[st
         task_title=parsed_run.task_title,
         raw_path=parsed_run.source_path,
         metadata=metadata,
-        exit_status=run_status_from_text(str(parsed_run.metadata.get("status") or "")),
+        exit_status=run_status_from_text(str(parsed_run.metadata.get("exit_status") or parsed_run.metadata.get("status") or "")),
+        api_calls=_int_metadata_value(parsed_run.metadata, "api_calls", 0),
+        cost=_float_metadata_value(parsed_run.metadata, "instance_cost", 0.0),
         step_count=len(parsed_run.steps),
         unique_files=int(fingerprint["num_unique_files"]),
         fingerprint=fingerprint,

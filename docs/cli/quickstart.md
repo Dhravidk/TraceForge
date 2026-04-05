@@ -2,6 +2,8 @@
 
 TraceForge is designed to be run from the terminal, usually from inside Codex CLI or Claude Code.
 
+The checked-in `sample-starter` batch is a tiny smoke/demo fixture. Use it to verify the tool path quickly, not as the main evidence that clustering or large-batch forensics is solved. For larger observed validation notes, see [validation_notes.md](validation_notes.md).
+
 ## Primary workflow
 
 From a fresh clone:

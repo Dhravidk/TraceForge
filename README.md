@@ -31,9 +31,9 @@ The thesis is:
 If another coding agent should operate this repo from the GitHub URL alone, point it at:
 
 - the repo URL: `https://github.com/Dhravidk/TraceForge`
-- [AGENTS.md](/home/gb10/Projects/JacHacks/AGENTS.md)
-- [quickstart.md](/home/gb10/Projects/JacHacks/docs/cli/quickstart.md)
-- [repo_handoff_prompts.md](/home/gb10/Projects/JacHacks/docs/cli/repo_handoff_prompts.md)
+- [AGENTS.md](AGENTS.md)
+- [quickstart.md](docs/cli/quickstart.md)
+- [repo_handoff_prompts.md](docs/cli/repo_handoff_prompts.md)
 
 The intended fresh-clone path is:
 
@@ -104,21 +104,22 @@ traceforge pack --batch upload-my_batch --run my_run_id --mode structured
 
 The detailed terminal-first guides are:
 
-- [AGENTS.md](/home/gb10/Projects/JacHacks/AGENTS.md)
-- [quickstart.md](/home/gb10/Projects/JacHacks/docs/cli/quickstart.md)
-- [provider_setup.md](/home/gb10/Projects/JacHacks/docs/cli/provider_setup.md)
-- [agent_workflows.md](/home/gb10/Projects/JacHacks/docs/cli/agent_workflows.md)
-- [command_reference.md](/home/gb10/Projects/JacHacks/docs/cli/command_reference.md)
-- [demo_playbook.md](/home/gb10/Projects/JacHacks/docs/cli/demo_playbook.md)
-- [output_schema.md](/home/gb10/Projects/JacHacks/docs/cli/output_schema.md)
-- [repo_handoff_prompts.md](/home/gb10/Projects/JacHacks/docs/cli/repo_handoff_prompts.md)
-- [troubleshooting.md](/home/gb10/Projects/JacHacks/docs/cli/troubleshooting.md)
+- [AGENTS.md](AGENTS.md)
+- [quickstart.md](docs/cli/quickstart.md)
+- [provider_setup.md](docs/cli/provider_setup.md)
+- [agent_workflows.md](docs/cli/agent_workflows.md)
+- [command_reference.md](docs/cli/command_reference.md)
+- [demo_playbook.md](docs/cli/demo_playbook.md)
+- [output_schema.md](docs/cli/output_schema.md)
+- [repo_handoff_prompts.md](docs/cli/repo_handoff_prompts.md)
+- [troubleshooting.md](docs/cli/troubleshooting.md)
+- [validation_notes.md](docs/cli/validation_notes.md)
 
 ## Current Status
 
 This repo now supports a CLI-first Jac demo path for sample and local upload batches.
 
-- Jac-native parsing for mini-SWE-agent sample trajectories
+- Jac-native parsing for starter fixtures and richer mini-SWE-agent `*.traj.json` fields, including `info.exit_status`, `info.model_stats`, `trajectory_format`, tool-call turns, and role-`tool` observations
 - Jac-native deterministic fingerprints and failure-family scoring
 - graph compilation into `Batch`, `Run`, `Step`, artifact, hypothesis, and cluster nodes
 - graph-backed batch, run, cluster, diagnosis, patch, comparison, and report walkers
@@ -136,6 +137,15 @@ This repo now supports a CLI-first Jac demo path for sample and local upload bat
 - markdown batch report export that doubles as a demo and Devpost backup artifact
 
 The remaining major work is deeper typed `by llm()` synthesis, final CLI polish, and last-mile demo recording polish. The current repo already supports the judge-facing CLI path: run inspection, raw-versus-structured pack generation, provider-aware comparison, blinded evaluation export, gold annotation export, rigorous uplift scoring, and markdown report export.
+
+## Validation Scope
+
+Two things are true at once:
+
+- the checked-in `sample-starter` batch is intentionally tiny and exists mainly for smoke tests and deterministic demo rehearsal
+- the tool has also been exercised on a real external 100-trajectory mini-SWE-agent batch, which is summarized in [validation_notes.md](docs/cli/validation_notes.md)
+
+That external validation is enough to show that TraceForge can ingest and summarize a materially larger batch, surface real infrastructure and budget failures, and localize representative runs. It is not yet the same thing as shipping a fully inspectable benchmark artifact set in-repo, and the docs should be read with that distinction in mind.
 
 ## Repo Layout
 
@@ -253,12 +263,12 @@ traceforge export-eval \
   --annotation-path exports/evals/sample-starter_gold_template.json
 ```
 
-The lower-level scoring helper still lives in [eval.jac](/home/gb10/Projects/JacHacks/traceforge/eval.jac), but it is not exposed as a public CLI subcommand beyond `export-eval --kind rigorous`.
+The lower-level scoring helper still lives in [eval.jac](traceforge/eval.jac), but it is not exposed as a public CLI subcommand beyond `export-eval --kind rigorous`.
 
-Local upload batches are discovered from folders under [uploads](/home/gb10/Projects/JacHacks/uploads) that contain `*.traj.json` files, or from zip archives that get extracted into a top-level upload batch directory. The repo includes [local_demo_batch](/home/gb10/Projects/JacHacks/uploads/local_demo_batch) as a fixture for the folder path, and the smoke suite generates a zip fixture at runtime for the archive path.
+Local upload batches are discovered from folders under [uploads](uploads) that contain `*.traj.json` files, or from zip archives that get extracted into a top-level upload batch directory. The repo includes [local_demo_batch](uploads/local_demo_batch) as a fixture for the folder path, and the smoke suite generates a zip fixture at runtime for the archive path.
 If you point `UploadBatch` at an external folder outside `uploads/`, TraceForge now creates a managed alias under `uploads/` so later `ParseBatch`, `AnalyzeBatch`, and `GetRunView` calls work through a stable upload batch ID.
 
-Expected project settings are in [jac.toml](/home/gb10/Projects/JacHacks/jac.toml).
+Expected project settings are in [jac.toml](jac.toml).
 
 ## Optional UI Appendix
 
@@ -273,9 +283,9 @@ jac start --dev
 
 ## Planning Docs
 
-- Long-term architecture brief: [LONG_TERM_PLAN.md](/home/gb10/Projects/JacHacks/LONG_TERM_PLAN.md)
-- Short-term execution plan: [SHORT_TERM_PLAN.md](/home/gb10/Projects/JacHacks/docs/plans/SHORT_TERM_PLAN.md)
-- Jac-only completion plan: [JAC_ONLY_COMPLETION_PLAN.md](/home/gb10/Projects/JacHacks/docs/plans/JAC_ONLY_COMPLETION_PLAN.md)
+- Long-term architecture brief: [LONG_TERM_PLAN.md](LONG_TERM_PLAN.md)
+- Short-term execution plan: [SHORT_TERM_PLAN.md](docs/plans/SHORT_TERM_PLAN.md)
+- Jac-only completion plan: [JAC_ONLY_COMPLETION_PLAN.md](docs/plans/JAC_ONLY_COMPLETION_PLAN.md)
 
 ## Submission Notes
 
@@ -287,7 +297,7 @@ The JacHacks site and participant guide emphasize:
 - real-world impact,
 - and a clear 3-minute presentation.
 
-Relevant docs are kept under [docs/submission](/home/gb10/Projects/JacHacks/docs/submission).
+Relevant docs are kept under [docs/submission](docs/submission).
 
 Recommended judge path:
 

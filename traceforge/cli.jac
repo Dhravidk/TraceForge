@@ -274,6 +274,10 @@ def _render_analyze(payload: dict[str, any]) -> None {
     _print_kv("Status", payload.get("status", ""));
     _print_kv("Runs", payload.get("run_count", 0));
     _print_kv("Clusters", payload.get("cluster_count", 0));
+    status_counts = payload.get("status_counts", {});
+    if status_counts {
+        _print_kv("Run statuses", _format_family_counts(status_counts));
+    }
     family_counts = payload.get("family_counts", {});
     if family_counts {
         _print_kv("Families", _format_family_counts(family_counts));
@@ -296,6 +300,10 @@ def _render_overview(payload: dict[str, any]) -> None {
     _print_kv("Status", payload.get("status", ""));
     _print_kv("Runs", len(runs));
     _print_kv("Clusters", len(clusters));
+    status_counts = payload.get("status_counts", {});
+    if status_counts {
+        _print_kv("Run statuses", _format_family_counts(status_counts));
+    }
     if family_counts {
         _print_kv("Families", _format_family_counts(family_counts));
     }
@@ -355,9 +363,16 @@ def _render_overview(payload: dict[str, any]) -> None {
 def _render_run(payload: dict[str, any]) -> None {
     print("Run " + str(payload.get("run_id", "")));
     _print_kv("Task", payload.get("task_title", ""));
+    _print_kv("Exit status", payload.get("exit_status", ""));
+    _print_kv("API calls", payload.get("api_calls", 0));
+    _print_kv("Cost", payload.get("cost", 0.0));
     _print_kv("Primary failure", payload.get("primary_failure", ""));
     _print_kv("Critical step", payload.get("critical_step_idx", -1));
     _print_kv("Source path", payload.get("source_path", ""));
+    telemetry = payload.get("artifacts", {}).get("telemetry", {});
+    if telemetry.get("trajectory_format") {
+        _print_kv("Trajectory format", telemetry.get("trajectory_format", ""));
+    }
     summary = str(payload.get("summary", "")).strip();
     if summary {
         print("");

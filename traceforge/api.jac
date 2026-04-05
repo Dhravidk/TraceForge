@@ -35,8 +35,8 @@ walker:pub GetStatus {
     can get with Root entry {
         report {
             "project": project_identity(),
-            "phase": "phase_7_fair_comparison_ready",
-            "message": "TraceForge now ships a Jac-only graph-backed demo with fair same-schema comparison, blinded eval export, cluster diagnosis, and markdown report export.",
+            "phase": "cli_first_beta",
+            "message": "TraceForge ships a CLI-first graph-backed beta for coding-agent trajectory analysis, pack generation, and compare/export workflows.",
         };
     }
 }

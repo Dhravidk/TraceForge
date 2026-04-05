@@ -18,8 +18,46 @@ include traceforge.api;
 test {
     status_result = root spawn GetStatus();
     status_data = status_result.reports[0];
-    assert status_data["phase"] == "phase_7_fair_comparison_ready";
-    assert status_data["project"]["status"] == "fair_comparison_ready";
+    assert status_data["phase"] == "cli_first_beta";
+    assert status_data["project"]["status"] == "cli_first_beta";
+}
+
+test {
+    parsed = parse_run("tests/fixtures/mini_swe_toolcall.traj.json");
+    assert parsed.run_id == "mini_swe_toolcall";
+    assert parsed.task_title == "fix the broken example.";
+    assert parsed.metadata["status"] == "Submitted";
+    assert parsed.metadata["exit_status"] == "Submitted";
+    assert parsed.metadata["api_calls"] == 7;
+    assert parsed.metadata["instance_cost"] == 0.125;
+    assert parsed.metadata["trajectory_format"] == "mini-swe-agent-1";
+    assert "Tool calls:" in parsed.turns[2].content;
+    assert "shell" in parsed.turns[2].content;
+    assert parsed.turns[3].role == "tool";
+}
+
+test {
+    rich_dir = Path("exports/rich_fixture_batch");
+    rich_dir.mkdir(parents=True, exist_ok=True);
+    fixture_text = Path("tests/fixtures/mini_swe_toolcall.traj.json").read_text(encoding="utf-8");
+    rich_dir.joinpath("mini_swe_toolcall.traj.json").write_text(fixture_text, encoding="utf-8");
+
+    rich_upload_result = root spawn UploadBatch(filename="exports/rich_fixture_batch");
+    rich_upload_data = rich_upload_result.reports[0];
+    assert rich_upload_data["batch_id"] == "upload-rich_fixture";
+
+    root spawn InvalidateBatchGraph(batch_id="upload-rich_fixture");
+    rich_analyze_result = root spawn AnalyzeBatch(batch_id="upload-rich_fixture");
+    rich_analyze_data = rich_analyze_result.reports[0];
+    assert rich_analyze_data["run_count"] == 1;
+    assert rich_analyze_data["status_counts"]["submitted"] == 1;
+
+    rich_run_result = root spawn GetRunView(run_id="mini_swe_toolcall", batch_id="upload-rich_fixture");
+    rich_run_data = rich_run_result.reports[0];
+    assert rich_run_data["exit_status"] == "submitted";
+    assert rich_run_data["api_calls"] == 7;
+    assert rich_run_data["cost"] == 0.125;
+    assert rich_run_data["artifacts"]["telemetry"]["trajectory_format"] == "mini-swe-agent-1";
 }
 
 test {

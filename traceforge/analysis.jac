@@ -25,6 +25,7 @@ import from traceforge.graph_build {
     remembered_cluster_patch_ids,
     run_graph_stats,
     run_batch_id_value,
+    run_status_name,
     step_kind_name
 }
 
@@ -117,6 +118,9 @@ def _run_summary_from_node(run_node: Run) -> dict[str, any] {
         "batch_id": run_batch_id_value(run_node),
         "task_title": run_node.task_title,
         "source_path": run_node.raw_path,
+        "exit_status": run_status_name(run_node.exit_status),
+        "api_calls": run_node.api_calls,
+        "cost": run_node.cost,
         "summary": run_node.summary,
         "primary_failure": primary_failure,
         "critical_step_idx": run_node.critical_step_idx,
@@ -125,6 +129,11 @@ def _run_summary_from_node(run_node: Run) -> dict[str, any] {
         "artifacts": {
             "turn_count": len(timeline),
             "metadata": run_node.metadata,
+            "telemetry": {
+                "api_calls": run_node.api_calls,
+                "cost": run_node.cost,
+                "trajectory_format": str(run_node.metadata.get("trajectory_format") or ""),
+            },
             "fingerprint": run_node.fingerprint,
             "graph_preview": run_graph_stats(run_node),
             "failure_hypotheses": _hypothesis_list(run_node),
@@ -225,6 +234,7 @@ def batch_overview_summary(root_node: any, batch_id: str) -> dict[str, any] {
     }
 
     family_counts: dict[str, int] = {};
+    status_counts: dict[str, int] = {};
     top_files_raw: list[str] = [];
     top_errors_raw: list[str] = [];
     top_tests_raw: list[str] = [];
@@ -234,6 +244,8 @@ def batch_overview_summary(root_node: any, batch_id: str) -> dict[str, any] {
     for run_node in runs {
         failure_label = failure_class_name(run_node.primary_failure);
         family_counts[failure_label] = family_counts.get(failure_label, 0) + 1;
+        status_label = run_status_name(run_node.exit_status);
+        status_counts[status_label] = status_counts.get(status_label, 0) + 1;
         top_files_raw.extend(run_node.fingerprint.get("top_files", []));
         top_errors_raw.extend(run_node.fingerprint.get("top_error_keywords", []));
         top_tests_raw.extend(run_node.fingerprint.get("top_test_names", []));
@@ -242,6 +254,9 @@ def batch_overview_summary(root_node: any, batch_id: str) -> dict[str, any] {
                 "run_id": run_node.run_id,
                 "batch_id": run_batch_id_value(run_node, batch.batch_id),
                 "task_title": run_node.task_title,
+                "exit_status": status_label,
+                "api_calls": run_node.api_calls,
+                "cost": run_node.cost,
                 "step_count": run_node.step_count,
                 "primary_failure": failure_label,
                 "cluster_id": run_node.cluster_id,
@@ -269,6 +284,7 @@ def batch_overview_summary(root_node: any, batch_id: str) -> dict[str, any] {
     return {
         "batch_id": batch_id,
         "family_counts": family_counts,
+        "status_counts": status_counts,
         "clusters": cluster_summaries,
         "top_files": summarize_counts(top_files_raw, 5),
         "top_errors": summarize_counts(top_errors_raw, 5),
@@ -302,6 +318,7 @@ def analyze_batch_summary(root_node: any, batch_id: str, force_rebuild: bool = F
         "message": "Batch graph is ready for analysis and UI reads.",
         "run_count": overview["run_count"],
         "family_counts": overview["family_counts"],
+        "status_counts": overview["status_counts"],
         "cluster_count": overview["cluster_count"],
     };
 }

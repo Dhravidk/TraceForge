@@ -89,7 +89,73 @@ def _turn_role(item: dict[str, any]) -> str {
     return str(role).lower();
 }
 
+def _tool_call_name(call: dict[str, any]) -> str {
+    function_payload = call.get("function");
+    if isinstance(function_payload, dict) {
+        name = function_payload.get("name");
+        if name is not None and str(name) {
+            return str(name);
+        }
+    }
+    name = call.get("name");
+    if name is not None and str(name) {
+        return str(name);
+    }
+    return "tool_call";
+}
+
+def _tool_call_arguments(call: dict[str, any]) -> str {
+    function_payload = call.get("function");
+    if isinstance(function_payload, dict) {
+        arguments = function_payload.get("arguments");
+        if arguments is not None and str(arguments) {
+            return str(arguments);
+        }
+    }
+    arguments = call.get("arguments");
+    if arguments is not None and str(arguments) {
+        return str(arguments);
+    }
+    return "";
+}
+
+def _tool_call_summary(item: dict[str, any]) -> str {
+    tool_calls = item.get("tool_calls");
+    if not isinstance(tool_calls, list) {
+        return "";
+    }
+    rendered: list[str] = [];
+    for call in tool_calls {
+        if not isinstance(call, dict) {
+            continue;
+        }
+        line = "- " + _tool_call_name(call);
+        arguments = _tool_call_arguments(call);
+        if arguments {
+            line += " args=" + truncate_text(arguments, 160);
+        }
+        rendered.append(line);
+    }
+    if not rendered {
+        return "";
+    }
+    return "Tool calls:\n" + "\n".join(rendered);
+}
+
 def _turn_content(item: dict[str, any]) -> str {
+    parts: list[str] = [];
+    role = _turn_role(item);
+    if role == "tool" {
+        tool_name = item.get("name");
+        if tool_name is not None and str(tool_name) {
+            parts.append("Tool: " + str(tool_name));
+        }
+        tool_call_id = item.get("tool_call_id");
+        if tool_call_id is not None and str(tool_call_id) {
+            parts.append("Tool call id: " + str(tool_call_id));
+        }
+    }
+
     content = item.get("content");
     if content is None {
         content = item.get("text");
@@ -97,10 +163,24 @@ def _turn_content(item: dict[str, any]) -> str {
     if content is None {
         content = item.get("message");
     }
-    if content is None {
-        return "";
+    content_text = "";
+    if content is not None {
+        if isinstance(content, str) {
+            content_text = content;
+        } else {
+            content_text = json.dumps(content);
+        }
     }
-    return str(content);
+    if content_text {
+        parts.append(content_text);
+    }
+
+    tool_call_text = _tool_call_summary(item);
+    if tool_call_text {
+        parts.append(tool_call_text);
+    }
+
+    return "\n".join([part for part in parts if part]).strip();
 }
 
 def extract_turns(raw: dict[str, any]) -> list[RawTurn] {
@@ -123,12 +203,13 @@ def extract_turns(raw: dict[str, any]) -> list[RawTurn] {
         if not isinstance(item, dict) {
             continue;
         }
+        item_dict = dict(item);
         turns.append(
             RawTurn(
                 index=index,
-                role=_turn_role(item),
-                content=_turn_content(item),
-                raw=item,
+                role=_turn_role(item_dict),
+                content=_turn_content(item_dict),
+                raw=item_dict,
             )
         );
     }
@@ -382,19 +463,6 @@ def step_has_submit(step: ParsedStep) -> bool {
     return bool(step.submit_text);
 }
 
-def _matching_payloads(step: ParsedStep, predicate: any, include_assistant: bool = True) -> list[str] {
-    matches: list[str] = [];
-    if include_assistant and step.assistant_content and predicate(step.assistant_content) {
-        matches.append(step.assistant_content);
-    }
-    for turn in step.trailing_turns {
-        if turn.content and predicate(turn.content) {
-            matches.append(turn.content);
-        }
-    }
-    return matches;
-}
-
 def _final_kind_from_step(step: ParsedStep, full_text: str) -> str {
     if step_has_submit(step) {
         return "SUBMIT";
@@ -445,11 +513,37 @@ def finalize_step(step: ParsedStep) -> ParsedStep {
         step.excerpt = truncate_text(text);
     }
     step.touched_files = extract_file_tokens(text);
-    command_matches = _matching_payloads(step, _looks_like_shell_command, True);
-    patch_matches = _matching_payloads(step, _looks_like_patch_payload, True);
-    test_matches = _matching_payloads(step, _looks_like_test_signal, True);
-    error_matches = _matching_payloads(step, _looks_like_error_signal, True);
-    submit_matches = _matching_payloads(step, _looks_like_submit_signal, True);
+    command_matches: list[str] = [];
+    patch_matches: list[str] = [];
+    test_matches: list[str] = [];
+    error_matches: list[str] = [];
+    submit_matches: list[str] = [];
+    payloads: list[str] = [];
+    if step.assistant_content {
+        payloads.append(step.assistant_content);
+    }
+    for turn in step.trailing_turns {
+        if turn.content {
+            payloads.append(turn.content);
+        }
+    }
+    for payload in payloads {
+        if _looks_like_shell_command(payload) {
+            command_matches.append(payload);
+        }
+        if _looks_like_patch_payload(payload) {
+            patch_matches.append(payload);
+        }
+        if _looks_like_test_signal(payload) {
+            test_matches.append(payload);
+        }
+        if _looks_like_error_signal(payload) {
+            error_matches.append(payload);
+        }
+        if _looks_like_submit_signal(payload) {
+            submit_matches.append(payload);
+        }
+    }
     if command_matches {
         step.command_text = truncate_text("\n".join(command_matches), 600);
     }
@@ -472,15 +566,17 @@ def finalize_step(step: ParsedStep) -> ParsedStep {
 
 def segment_steps(turns: list[RawTurn]) -> list[ParsedStep] {
     steps: list[ParsedStep] = [];
-    current: ParsedStep | None = None;
+    current = ParsedStep(index=0);
+    has_current = False;
 
     for turn in turns {
         is_assistant = turn.role in {"assistant", "agent"};
         if is_assistant {
-            if current is not None {
+            if has_current {
                 steps.append(finalize_step(current));
             }
             current = ParsedStep(index=len(steps));
+            has_current = True;
             current.role = turn.role;
             current.assistant_content = turn.content;
             current.excerpt = truncate_text(turn.content);
@@ -488,8 +584,9 @@ def segment_steps(turns: list[RawTurn]) -> list[ParsedStep] {
             continue;
         }
 
-        if current is None {
+        if not has_current {
             current = ParsedStep(index=len(steps));
+            has_current = True;
             current.role = turn.role;
         }
 
@@ -504,20 +601,103 @@ def segment_steps(turns: list[RawTurn]) -> list[ParsedStep] {
         }
     }
 
-    if current is not None {
+    if has_current {
         steps.append(finalize_step(current));
     }
 
     return steps;
 }
 
+def inferred_task_title(turns: list[RawTurn]) -> str {
+    for turn in turns {
+        if turn.role != "user" or not turn.content {
+            continue;
+        }
+        first_line = turn.content.split("\n")[0].strip();
+        if not first_line {
+            continue;
+        }
+        if first_line.lower().startswith("task:") {
+            return truncate_text(first_line[5:].strip(), 160);
+        }
+        return truncate_text(first_line, 160);
+    }
+    return "";
+}
+
+def _int_or_default(value: int | float | str | None, fallback: int = 0) -> int {
+    if value is None or value == "" {
+        return fallback;
+    }
+    return int(float(value));
+}
+
+def _float_or_default(value: int | float | str | None, fallback: float = 0.0) -> float {
+    if value is None or value == "" {
+        return fallback;
+    }
+    return float(value);
+}
+
+def _normalized_metadata(raw: dict[str, any]) -> dict[str, any] {
+    metadata = raw.get("metadata");
+    if not isinstance(metadata, dict) {
+        metadata = {};
+    }
+    normalized = dict(metadata);
+
+    info = raw.get("info");
+    if isinstance(info, dict) {
+        exit_status = info.get("exit_status");
+        if exit_status is not None and str(exit_status) {
+            normalized["status"] = str(exit_status);
+            normalized["exit_status"] = str(exit_status);
+        }
+
+        traceback_text = info.get("traceback");
+        if traceback_text is not None and str(traceback_text) {
+            normalized["traceback"] = str(traceback_text);
+        }
+
+        submission = info.get("submission");
+        submission_text = str(submission) if submission is not None else "";
+        if submission_text {
+            normalized["submission"] = submission_text;
+        }
+
+        mini_version = info.get("mini_version");
+        if mini_version is not None and str(mini_version) {
+            normalized["mini_version"] = str(mini_version);
+        }
+
+        model_stats = info.get("model_stats");
+        if isinstance(model_stats, dict) {
+            api_calls_value = model_stats.get("api_calls");
+            instance_cost_value = model_stats.get("instance_cost");
+            normalized["api_calls"] = _int_or_default(api_calls_value, normalized.get("api_calls", 0));
+            normalized["instance_cost"] = _float_or_default(instance_cost_value, normalized.get("instance_cost", 0.0));
+        }
+    }
+
+    trajectory_format = raw.get("trajectory_format");
+    if trajectory_format is not None and str(trajectory_format) {
+        normalized["trajectory_format"] = str(trajectory_format);
+    }
+    if "status" in normalized and "exit_status" not in normalized {
+        normalized["exit_status"] = str(normalized["status"]);
+    }
+    return normalized;
+}
+
 def parse_run(source_path: str, run_id: str = "") -> ParsedRun {
     raw = load_trajectory_file(source_path);
     turns = extract_turns(raw);
     steps = segment_steps(turns);
-    metadata = raw.get("metadata");
-    if not isinstance(metadata, dict) {
-        metadata = {};
+    metadata = _normalized_metadata(raw);
+    info_dict: dict[str, any] = {};
+    raw_info = raw.get("info");
+    if isinstance(raw_info, dict) {
+        info_dict = raw_info;
     }
     chosen_run_id = run_id;
     if not chosen_run_id {
@@ -538,7 +718,7 @@ def parse_run(source_path: str, run_id: str = "") -> ParsedRun {
         turns=turns,
         steps=steps,
         metadata=metadata,
-        instance_id=str(raw.get("instance_id") or ""),
-        task_title=str(raw.get("task_title") or ""),
+        instance_id=str(raw.get("instance_id") or info_dict.get("instance_id") or ""),
+        task_title=str(raw.get("task_title") or raw.get("task") or info_dict.get("task_title") or inferred_task_title(turns)),
     );
 }
