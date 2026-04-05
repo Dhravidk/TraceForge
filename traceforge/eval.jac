@@ -1,7 +1,7 @@
 import json;
 import from os { getenv }
 import from pathlib { Path }
-import from shutil { which, rmtree }
+import from shutil { rmtree }
 import from subprocess { run }
 import from tempfile { mkdtemp }
 import from time { perf_counter }
@@ -14,6 +14,12 @@ import from traceforge.graph_build { failure_class_name }
 import from traceforge.llm_ops {
     cluster_rule_lines,
     diagnosis_reason,
+}
+import from traceforge.provider_config {
+    configured_codex_cli_path,
+    configured_provider_key,
+    configured_provider_model,
+    provider_resolution_summary,
 }
 import from traceforge.parser { hash_text, parse_run, step_text, truncate_text }
 
@@ -247,71 +253,19 @@ def _codex_cli_path() -> str {
     if configured {
         return configured;
     }
-    discovered = which("codex");
-    if discovered is None {
-        return "";
-    }
-    return str(discovered);
+    return configured_codex_cli_path();
 }
 
 def _provider_key(provider: str) -> str {
-    if provider == "openai" {
-        return str(getenv("OPENAI_API_KEY") or "");
-    }
-    if provider == "anthropic" {
-        return str(getenv("ANTHROPIC_API_KEY") or "");
-    }
-    return "";
+    return configured_provider_key(provider);
 }
 
 def _provider_model(provider: str, model: str = "") -> str {
-    if model {
-        return model;
-    }
-    if provider == "openai" {
-        return str(getenv("TRACEFORGE_OPENAI_MODEL") or getenv("OPENAI_MODEL") or "");
-    }
-    if provider == "anthropic" {
-        return str(getenv("TRACEFORGE_ANTHROPIC_MODEL") or getenv("ANTHROPIC_MODEL") or "");
-    }
-    if provider == "codex" {
-        return str(getenv("TRACEFORGE_CODEX_MODEL") or getenv("CODEX_MODEL") or "gpt-5.4");
-    }
-    return "";
+    return configured_provider_model(provider, model);
 }
 
 def _resolve_provider(provider: str = "auto", model: str = "") -> dict[str, any] {
-    preferred = str(provider or "auto").lower();
-    if preferred in {"openai", "anthropic", "codex"} {
-        resolved_model = _provider_model(preferred, model);
-        available = False;
-        if preferred == "codex" {
-            available = bool(_codex_cli_path());
-        } else {
-            available = bool(_provider_key(preferred) and resolved_model);
-        }
-        return {
-            "provider": preferred,
-            "model": resolved_model,
-            "available": available,
-        };
-    }
-
-    for candidate in ["openai", "anthropic"] {
-        resolved_model = _provider_model(candidate, "");
-        if _provider_key(candidate) and resolved_model {
-            return {
-                "provider": candidate,
-                "model": resolved_model,
-                "available": True,
-            };
-        }
-    }
-    return {
-        "provider": "",
-        "model": "",
-        "available": False,
-    };
+    return provider_resolution_summary(provider, model);
 }
 
 def _codex_exec_prompt(system_prompt: str, user_prompt: str) -> str {

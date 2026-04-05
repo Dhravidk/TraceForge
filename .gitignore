@@ -8,6 +8,7 @@ __pycache__/
 .env
 .venv/
 node_modules/
+.traceforge/
 
 # Runtime/demo artifacts
 uploads/*

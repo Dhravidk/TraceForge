@@ -7,6 +7,7 @@ import from traceforge.graph_build {
     upsert_cluster_patch
 }
 import from traceforge.parser { truncate_text }
+import from traceforge.provider_config { configured_provider_key }
 import from traceforge.schema { ClusterLabel, ComparisonVerdict, FailureClass, MemoryPatchProposal, RunDiagnosis }
 
 def choose_failure_class(text: str) -> FailureClass by llm();
@@ -20,7 +21,7 @@ def propose_run_diagnosis(text: str) -> RunDiagnosis by llm();
 def compare_run_diagnoses(text: str) -> ComparisonVerdict by llm();
 
 def llm_enabled() -> bool {
-    return str(getenv("OPENAI_API_KEY") or "") != "";
+    return str(configured_provider_key("openai") or getenv("OPENAI_API_KEY") or "") != "";
 }
 
 def diagnosis_reason(failure_class: str) -> str {

@@ -13,4 +13,12 @@ include traceforge.reporting;
 include traceforge.api;
 include traceforge.ui;
 
+cl import from traceforge.ui { app as TraceForgeApp }
+
+cl {
+    def:pub app() -> JsxElement {
+        return <TraceForgeApp />;
+    }
+}
+
 with entry {}
