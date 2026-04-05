@@ -3,6 +3,9 @@
 TraceForge is a Jac-native batch failure compiler for coding-agent trajectories.
 It ingests mini-SWE-agent `*.traj.json` files, compiles them into a graph, groups recurring failure motifs, localizes likely critical steps, and synthesizes reusable memory updates such as `AGENTS.md` patches.
 
+TraceForge is now being shaped primarily as a **CLI-first tool for Codex CLI and Claude Code workflows**.
+The core job is not to replace those coding agents. The core job is to give them better structured evidence than a raw trajectory dump.
+
 ## Why This Exists
 
 Coding-agent trajectories are long, repetitive, and difficult to compare at batch scale.
@@ -13,9 +16,107 @@ TraceForge is meant to turn those runs into something judges and users can inspe
 - critical-step evidence,
 - and reusable operational memory rules.
 
+The most important product loop is:
+
+1. generate a `raw` evidence pack
+2. generate a `structured` TraceForge evidence pack
+3. let Codex or Claude Code analyze the difference
+
+The thesis is:
+
+> same failed run, same outer model, better evidence pack
+
+## GitHub Handoff
+
+If another coding agent should operate this repo from the GitHub URL alone, point it at:
+
+- the repo URL: `https://github.com/Dhravidk/TraceForge`
+- [AGENTS.md](/home/gb10/Projects/JacHacks/AGENTS.md)
+- [quickstart.md](/home/gb10/Projects/JacHacks/docs/cli/quickstart.md)
+- [repo_handoff_prompts.md](/home/gb10/Projects/JacHacks/docs/cli/repo_handoff_prompts.md)
+
+The intended fresh-clone path is:
+
+```bash
+git clone https://github.com/Dhravidk/TraceForge.git
+cd TraceForge
+./scripts/bootstrap
+source .venv/bin/activate
+traceforge doctor
+```
+
+## CLI Quickstart
+
+From a fresh clone:
+
+```bash
+git clone https://github.com/Dhravidk/TraceForge.git
+cd TraceForge
+./scripts/bootstrap
+source .venv/bin/activate
+```
+
+Then run TraceForge from the repo root:
+
+```bash
+traceforge doctor
+traceforge analyze-batch --batch sample-starter
+traceforge run --batch sample-starter --run premature_completion
+traceforge pack --batch sample-starter --run premature_completion --mode raw
+traceforge pack --batch sample-starter --run premature_completion --mode structured
+traceforge compare --batch sample-starter --run premature_completion --strict-provider
+```
+
+For automation-friendly output, add `--json`.
+
+Provider resolution follows one rule across the CLI:
+- explicit `--provider` wins
+- otherwise a saved preference from `traceforge auth use` wins
+- otherwise logged-in Codex is preferred
+- otherwise API-key-backed OpenAI or Anthropic is used if configured
+
+To save a pack artifact for downstream use:
+
+```bash
+traceforge pack --batch sample-starter --run premature_completion --mode structured --save
+```
+
+To save a compare artifact for downstream use:
+
+```bash
+traceforge compare --batch sample-starter --run premature_completion --save
+```
+
+To generate the whole sample demo bundle in one command:
+
+```bash
+traceforge demo --batch sample-starter --run premature_completion
+```
+
+To analyze your own trajectories instead of the sample batch:
+
+```bash
+traceforge analyze-batch --input /path/to/my_batch
+traceforge overview --batch upload-my_batch
+traceforge run --batch upload-my_batch --run my_run_id
+traceforge pack --batch upload-my_batch --run my_run_id --mode structured
+```
+
+The detailed terminal-first guides are:
+
+- [AGENTS.md](/home/gb10/Projects/JacHacks/AGENTS.md)
+- [quickstart.md](/home/gb10/Projects/JacHacks/docs/cli/quickstart.md)
+- [provider_setup.md](/home/gb10/Projects/JacHacks/docs/cli/provider_setup.md)
+- [agent_workflows.md](/home/gb10/Projects/JacHacks/docs/cli/agent_workflows.md)
+- [command_reference.md](/home/gb10/Projects/JacHacks/docs/cli/command_reference.md)
+- [demo_playbook.md](/home/gb10/Projects/JacHacks/docs/cli/demo_playbook.md)
+- [output_schema.md](/home/gb10/Projects/JacHacks/docs/cli/output_schema.md)
+- [repo_handoff_prompts.md](/home/gb10/Projects/JacHacks/docs/cli/repo_handoff_prompts.md)
+- [troubleshooting.md](/home/gb10/Projects/JacHacks/docs/cli/troubleshooting.md)
+
 ## Current Status
 
-This repo is now running a submission-ready Jac demo path for sample and local upload batches.
+This repo now supports a CLI-first Jac demo path for sample and local upload batches.
 
 - Jac-native parsing for mini-SWE-agent sample trajectories
 - Jac-native deterministic fingerprints and failure-family scoring
@@ -26,15 +127,15 @@ This repo is now running a submission-ready Jac demo path for sample and local u
 - external folder uploads now get managed aliases under `uploads/` so they can be analyzed through the normal batch flow
 - credential-gated typed `by llm()` reasoning with deterministic fallback when no model key is present
 - Jac smoke tests for the starter demo path
-- a readable demo UI organized around batch overview, cluster explorer, run forensics, and baseline comparison
-- live cluster diagnosis and batch-report export surfaced directly in the Jac UI
+- a public `traceforge` CLI wrapper for doctor, run, pack, compare, and export flows
+- pack-first analysis for raw versus structured evidence on the same failed run
 - fair same-schema raw-transcript-vs-TraceForge comparison with explicit blind spots, support points, verifier output, and evidence-window grounding
 - blinded evaluation export for side-by-side judging of raw transcript analysis versus TraceForge retrieval
 - gold annotation template export for a manually labeled evaluation subset
 - rigorous batch evaluation export with provider-aware Anthropic/OpenAI API support and gold-score uplift summaries
 - markdown batch report export that doubles as a demo and Devpost backup artifact
 
-The remaining major work is deeper typed `by llm()` synthesis and any last-mile demo recording polish. The current repo already supports the full judge-facing path: batch overview, cluster explorer, run forensics, fair baseline comparison, blinded evaluation export, gold annotation template export, rigorous uplift scoring, cluster diagnosis, and markdown report export.
+The remaining major work is deeper typed `by llm()` synthesis, final CLI polish, and last-mile demo recording polish. The current repo already supports the judge-facing CLI path: run inspection, raw-versus-structured pack generation, provider-aware comparison, blinded evaluation export, gold annotation export, rigorous uplift scoring, and markdown report export.
 
 ## Repo Layout
 
@@ -75,83 +176,74 @@ Jac is central to the design:
 - graph-native schema for runs, steps, files, patches, tests, and clusters
 - walkers as the public API surface and orchestration layer
 - typed `by llm()` outputs for diagnoses and memory patches
-- a local full-stack path with a small demo UI
+- a CLI-first operator path with an optional appendix UI
 
 This is important for JacHacks because meaningful Jac usage is part of the judging criteria.
 
 ## Planned Demo Flow
 
-1. Load a sample batch of mini-SWE-agent trajectories.
-2. Show failure families, top files, top errors, and cluster counts.
-3. Open one representative cluster and inspect recurring signals plus the generated `AGENTS.md` patch.
-4. Open one representative run and highlight the likely critical step.
-5. Show run diagnosis and cluster diagnosis.
-6. Compare a raw-transcript diagnosis versus TraceForge retrieval under the same output schema.
-7. Export the blinded evaluation sheet and markdown batch report as demo fallback artifacts.
+1. Run `traceforge doctor`.
+2. Analyze the sample batch.
+3. Open one failed run in the terminal.
+4. Show the `raw` pack.
+5. Show the `structured` pack.
+6. Explain that the outer model is the same and the evidence pack is better.
+7. If provider access is healthy, run strict compare.
+8. End on the markdown report as a fallback artifact.
 
 ## Local Run
 
-The intended local startup command is:
+The preferred product path is now the CLI:
 
 ```bash
-jac start --dev
+traceforge doctor
+traceforge analyze-batch --batch sample-starter
+traceforge run --batch sample-starter --run premature_completion
+traceforge pack --batch sample-starter --run premature_completion --mode structured
 ```
 
-Verified locally:
+After a fresh clone:
 
 ```bash
-jac check main.jac
-jac test tests/smoke.jac
-jac enter main.jac GetBatchCatalog
-jac enter main.jac UploadBatch local_demo_batch
-jac enter main.jac UploadBatch local_zip_demo.zip
-jac enter main.jac ParseBatch upload-local_demo
-jac enter main.jac AnalyzeBatch upload-local_demo
-jac enter main.jac GetRunView premature_completion --batch_id upload-local_demo
-jac enter main.jac AnalyzeBatch sample-starter
-jac enter main.jac LoadSampleBatch starter
-jac enter main.jac GetBatchOverview sample-starter
-jac enter main.jac GetRunView premature_completion
-jac enter main.jac GetClusterView sample-starter:premature_completion:0
-jac enter main.jac CompileMemoryPatch sample-starter:premature_completion:0
-jac enter main.jac CompareBaseline premature_completion
-jac enter main.jac ExportBlindedEvaluation sample-starter --limit 2
-jac enter main.jac ExportGoldAnnotationTemplate sample-starter --substantive_limit 2 --startup_limit 0
-jac enter main.jac RunRigorousEvaluation sample-starter --substantive_limit 2 --startup_limit 0
-jac enter main.jac ExportBatchReport sample-starter
+./scripts/bootstrap
+source .venv/bin/activate
 ```
 
-If you want model-backed evaluation instead of deterministic fallback, set one provider key plus a model name before running the eval walkers:
+Core CLI examples:
 
 ```bash
-export OPENAI_API_KEY=...
-export TRACEFORGE_OPENAI_MODEL=gpt-5.4
-
-# or
-
-export ANTHROPIC_API_KEY=...
-export TRACEFORGE_ANTHROPIC_MODEL=claude-sonnet-4-20250514
+traceforge doctor
+traceforge analyze-batch --batch sample-starter
+traceforge overview --batch sample-starter
+traceforge run --batch sample-starter --run premature_completion
+traceforge cluster --cluster sample-starter:premature_completion:0
+traceforge pack --batch sample-starter --run premature_completion --mode raw
+traceforge pack --batch sample-starter --run premature_completion --mode structured
+traceforge compare --batch sample-starter --run premature_completion --strict-provider
+traceforge export-report --batch sample-starter
+traceforge export-eval --batch sample-starter --kind blind
 ```
 
-For a local Codex CLI preliminary evaluation that uses the machine's logged-in Codex account instead of API keys:
+Provider-backed examples:
 
 ```bash
-export TRACEFORGE_CODEX_MODEL=gpt-5.4
-```
+traceforge auth use codex --model gpt-5.4
+traceforge compare --batch sample-starter --run premature_completion --strict-provider
 
-Then run the same walkers with an explicit provider if you want to lock the evaluation:
+traceforge auth use openai --model gpt-5.4 --openai-api-key "$OPENAI_API_KEY"
+traceforge compare --batch sample-starter --run invalid_patch --provider openai --strict-provider
 
-```bash
-jac enter main.jac CompareBaseline premature_completion --batch_id sample-starter --provider openai
-jac enter main.jac ExportBlindedEvaluation sample-starter --limit 10 --provider anthropic
-jac enter main.jac RunRigorousEvaluation sample-starter --provider openai --substantive_limit 20 --startup_limit 5
-jac enter main.jac CompareBaseline premature_completion sample-starter codex
-jac enter main.jac RunRigorousEvaluation sample-starter codex gpt-5.4 20 5 exports/evals/sample-starter_gold_template.json
+traceforge auth use anthropic --model claude-sonnet-4-20250514 --anthropic-api-key "$ANTHROPIC_API_KEY"
+traceforge compare --batch sample-starter --run invalid_patch --provider anthropic --strict-provider
 ```
 
 Explicit provider runs now namespace their eval artifacts so deterministic, API, and Codex outputs can coexist. For example, a Codex run writes files such as `sample-starter_codex_gpt_5_4_comparison.json` instead of overwriting `sample-starter_comparison.json`.
 
-After exporting the gold worksheet and filling it in, score the evaluation against the labeled subset:
+## Internal Jac Appendix
+
+Developer-only Jac entrypoints still exist underneath the wrapper, but they are now the internal API layer rather than the recommended operator interface.
+
+After exporting the gold worksheet and filling it in, the underlying rigorous scoring entrypoint remains available through Jac:
 
 ```bash
 jac enter main.jac ScoreRigorousEvaluation \
@@ -161,9 +253,19 @@ jac enter main.jac ScoreRigorousEvaluation \
 
 Local upload batches are discovered from folders under [uploads](/home/gb10/Projects/JacHacks/uploads) that contain `*.traj.json` files, or from zip archives that get extracted into a top-level upload batch directory. The repo includes [local_demo_batch](/home/gb10/Projects/JacHacks/uploads/local_demo_batch) as a fixture for the folder path, and the smoke suite generates a zip fixture at runtime for the archive path.
 If you point `UploadBatch` at an external folder outside `uploads/`, TraceForge now creates a managed alias under `uploads/` so later `ParseBatch`, `AnalyzeBatch`, and `GetRunView` calls work through a stable upload batch ID.
-The demo UI now exposes a batch catalog so sample and upload batches can be browsed without changing commands.
 
 Expected project settings are in [jac.toml](/home/gb10/Projects/JacHacks/jac.toml).
+
+## Optional UI Appendix
+
+The UI is intentionally secondary to the CLI product.
+Use it only when you explicitly want a visual appendix or a backup demo surface.
+
+Start it with:
+
+```bash
+jac start --dev
+```
 
 ## Planning Docs
 
@@ -185,9 +287,9 @@ Relevant docs are kept under [docs/submission](/home/gb10/Projects/JacHacks/docs
 
 Recommended judge path:
 
-1. Start the app and open the starter batch.
-2. Show the failure-family overview and top recurring artifacts.
-3. Open the first cluster and read one recurring signal plus the generated patch.
-4. Open the medoid run and point to the highlighted critical-step window.
-5. Compare the raw transcript arm against the TraceForge retrieval arm and read the verifier verdict.
-6. Export the blinded eval sheet and batch report and show the generated markdown paths as backup artifacts.
+1. Start in the terminal, not the UI.
+2. Show `doctor`.
+3. Show one failed run.
+4. Show `raw` versus `structured` evidence packs.
+5. If available, run strict provider compare.
+6. End on exported markdown artifacts as backup.

@@ -1,5 +1,7 @@
 # JacHacks 2026 — Codex Implementation Brief V2
 
+> Historical planning note: this document captures the original architecture brief. The current public operator interface is the `traceforge` CLI. For install and usage, start with [README.md](/home/gb10/Projects/JacHacks/README.md) and the guides under `docs/cli/`.
+
 ## Status of this document
 
 This is the **merged V2 implementation brief** for the JacHacks project.

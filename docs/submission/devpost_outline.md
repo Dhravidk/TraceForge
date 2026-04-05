@@ -2,11 +2,11 @@
 
 ## Problem
 
-Coding-agent trajectories are long, repetitive, and hard to compare across many runs.
+Coding-agent trajectories are long, repetitive, and hard to analyze once a coding agent fails. Developers already work inside tools like Codex CLI and Claude Code, but those tools still have to reason over noisy raw traces.
 
 ## Solution
 
-TraceForge compiles batches of mini-SWE-agent trajectories into a Jac graph, clusters repeated failure motifs, localizes likely critical steps, and synthesizes reusable memory patches.
+TraceForge is a CLI-first trajectory compiler for AI coding workflows. It compiles batches of mini-SWE-agent trajectories into a Jac graph, localizes likely critical steps, clusters repeated failure motifs, and emits structured evidence packs that Codex or Claude Code can reason over more effectively than a raw trace dump.
 
 ## How It Works
 
@@ -15,57 +15,57 @@ TraceForge compiles batches of mini-SWE-agent trajectories into a Jac graph, clu
 3. Compile those objects into a Jac graph.
 4. Score failure families and cluster similar failures.
 5. Localize the likely first irreversible step in representative failed runs.
-6. Generate cluster-level memory patches such as `AGENTS.md` diffs.
-7. Compare a raw compressed baseline against the structured evidence-pack path.
+6. Generate a `raw` evidence pack and a graph-backed `structured` evidence pack for the same failed run.
+7. Let the outer coding agent or an optional built-in compare path analyze the difference.
 
 ## Why Jac
 
 - graph-native storage for runs, steps, files, and clusters
 - walkers as the analysis and API surface
 - typed `by llm()` outputs for diagnosis and memory patch synthesis
-- local full-stack demo path in one Jac-first repo
+- a Jac-native backend that powers a CLI-first product surface
 
 ## Current build status
 
 - Jac-native parser and fingerprint pipeline for mini-SWE-agent trajectories
 - Graph compilation into `Batch`, `Run`, `Step`, artifact, hypothesis, cluster, and memory-patch nodes
-- Batch overview, cluster explorer, run forensics, and baseline comparison UI in Jac
+- CLI wrapper for doctor, run, pack, compare, and export flows
 - Local upload-batch support alongside sample demo batches
 - Zip upload-batch support for local archive ingestion
 - Credential-gated typed `by llm()` hooks with deterministic fallback
-- Cluster diagnosis surfaced in the Jac UI
+- Provider configuration support for Codex CLI, OpenAI, and Anthropic
 - Markdown batch report export for demo and Devpost backup artifacts
 
 ## What judges can see immediately
 
-- recurring failure families across a batch
-- a representative cluster with recurring signals
 - a failed run with a localized critical step
-- an `AGENTS.md` patch synthesized from the cluster motif
-- a raw-baseline versus structured-analysis comparison
-- a markdown batch report export that can stand in for the UI if needed
+- a raw evidence pack
+- a structured graph-backed evidence pack
+- a strict provider-backed compare when credentials are available
+- a markdown batch report export that can stand in for the live compare path if needed
 
 ## What Makes It Different
 
-- It is not a trace viewer; it is a batch failure compiler.
+- It is not a trace viewer; it is a trajectory compiler for coding agents.
+- The main product loop is not "host the model." It is "improve the evidence pack."
 - The LLM path is intentionally constrained to compact evidence packs instead of raw trajectories.
 - Cluster-level memory patches turn repeated failures into reusable operational rules.
-- Jac is central to the schema, graph traversal, typed outputs, API walkers, and UI.
+- Jac is central to the schema, graph traversal, typed outputs, and backend walkers that power the CLI.
 
 ## Challenges
 
-- Keeping the project Jac-first while still shipping quickly.
-- Making clustering and critical-step localization deterministic enough to explain in a 3-minute demo.
+- Keeping the project Jac-first while shaping it into a clean CLI product rather than a research demo.
+- Making provider-backed compare explicit enough that it never silently misrepresents fallback behavior.
 - Handling local upload folders and zip archives without turning the project into a generic ingestion platform.
 
 ## Accomplishments
 
-- Shipped a Jac-only runtime path for parsing, graph build, clustering, localization, comparison, and export.
-- Built a live multi-batch demo surface in Jac.
-- Added a reliable markdown fallback artifact for demo and Devpost use.
+- Shipped a Jac-native runtime path for parsing, graph build, clustering, localization, comparison, and export.
+- Repositioned the product around a CLI-first workflow that fits Codex CLI and Claude Code usage.
+- Added reliable markdown fallback artifacts for demo and Devpost use.
 
 ## What’s Next
 
-- Stronger typed `by llm()` synthesis when credentials are available.
+- Stronger strict-mode provider handling and clearer JSON output contracts.
 - Broader trajectory-schema support beyond mini-SWE-agent.
 - Repeated-batch learning and memory retrieval across historical failure corpora.

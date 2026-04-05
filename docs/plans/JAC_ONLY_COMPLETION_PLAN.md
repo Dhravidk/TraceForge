@@ -1,5 +1,7 @@
 # TraceForge Jac-Only Completion Plan
 
+> Historical planning note: this document captures backend architecture goals. The current public operator interface is the `traceforge` CLI. For install and usage, start with [README.md](/home/gb10/Projects/JacHacks/README.md) and the guides under `docs/cli/`.
+
 ## Purpose
 
 This is the active execution plan for completing TraceForge from the current scaffold to a JacHacks-ready submission.
@@ -11,7 +13,7 @@ It does four things at once:
 3. keeps the repo organized enough for public judging,
 4. and lets multiple Codex threads work in parallel without overwriting each other.
 
-This document replaces the earlier assumption that Python helpers were acceptable during implementation.
+This document now assumes a Jac-native backend with a thin Python CLI wrapper where it materially improves operator usability.
 
 ## Non-Negotiables
 
@@ -23,9 +25,9 @@ This document replaces the earlier assumption that Python helpers were acceptabl
 
 ### Architecture
 
-- All application logic must end in `.jac`.
-- No runtime `import from py...` is allowed in the final repo.
-- Jac remains central for schema, walkers, orchestration, graph traversal, typed `by llm()` calls, and UI.
+- Core analysis logic must remain Jac-native.
+- Thin Python wrapper code is acceptable for CLI packaging, provider ergonomics, and operator experience.
+- Jac remains central for schema, walkers, orchestration, graph traversal, typed `by llm()` calls, and the underlying analysis runtime.
 
 ### Repo Hygiene
 
@@ -50,7 +52,7 @@ The repo is useful but not MVP-complete.
 
 - diagnosis and patch synthesis currently use deterministic scaffolds rather than full typed `by llm()` evidence-pack flows
 - the baseline comparison is now wired but still heuristic rather than same-model dual prompting
-- the client now loads live starter-batch data, but it is still a raw shell rather than the final polished demo UI
+- the public CLI surface is still mid-transition from raw Jac entrypoints to a polished operator-facing tool
 
 ### Progress Against The Long-Term Plan
 
@@ -102,7 +104,7 @@ JacHacks/
   tests/
 ```
 
-The `py/` directory is not part of the required end state.
+The old `py/` runtime-helper directory is not part of the required end state. A thin first-party Python CLI wrapper is acceptable.
 
 ## Completion Strategy
 
@@ -124,23 +126,16 @@ Done when:
 - everyone knows which files they own
 - no one is editing shared entry files casually
 
-### Gate 1 - Jac-Only Migration
+### Gate 1 - Jac-Native Core Consolidation
 
 Goal:
-- remove Python runtime dependencies before deeper feature work continues
+- keep the analysis core Jac-native while allowing a thin Python product wrapper
 
 Tasks:
-- add `traceforge/parser.jac`
-- add `traceforge/features.jac`
-- add `traceforge/clustering.jac`
-- add `traceforge/critical.jac`
-- add `traceforge/graph_build.jac`
-- port step segmentation from `py/parser.py`
-- port fingerprint and summary helpers from `py/features.py`
-- port similarity helpers from `py/similarity.py`
-- port shared helpers from `py/utils.py`
-- rewire `traceforge/ingest.jac` and `traceforge/analysis.jac` to use Jac imports only
-- remove `py/` from the runtime path
+- keep `traceforge/parser.jac`, `traceforge/features.jac`, `traceforge/clustering.jac`, `traceforge/critical.jac`, and `traceforge/graph_build.jac` as the core runtime
+- ensure the wrapper layer only orchestrates CLI UX and does not absorb analysis logic
+- keep `traceforge/ingest.jac` and `traceforge/analysis.jac` on the Jac-native path
+- remove any legacy `py/` runtime-helper dependency from the backend path
 
 Verification:
 - `rg "import from py" /home/gb10/Projects/JacHacks/traceforge /home/gb10/Projects/JacHacks/main.jac` returns nothing
@@ -148,7 +143,7 @@ Verification:
 - sample load, parse, batch overview, and run view still work
 
 Done when:
-- the app works without any Python runtime helpers
+- the backend analysis path works without any Python analysis helpers
 
 ### Gate 2 - Real Graph Compilation
 

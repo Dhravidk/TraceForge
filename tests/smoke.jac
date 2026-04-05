@@ -183,7 +183,7 @@ test {
 }
 
 test {
-    result = root spawn CompareBaseline(run_id="premature_completion", batch_id="sample-starter");
+    result = root spawn CompareBaseline(run_id="premature_completion", batch_id="sample-starter", provider="openai");
     data = result.reports[0];
     assert data["status"] == "comparison_ready";
     assert data["comparison_mode"] == "deterministic_proxy";
@@ -202,13 +202,32 @@ test {
 }
 
 test {
-    result = root spawn ExportBlindedEvaluation(batch_id="sample-starter", limit=2);
+    raw_result = root spawn PackRun(run_id="invalid_patch", batch_id="sample-starter", mode="raw");
+    raw_data = raw_result.reports[0];
+    assert raw_data["status"] == "pack_ready";
+    assert raw_data["mode"] == "raw";
+    assert raw_data["prompt_mode"] == "raw_transcript_prompt";
+    assert "Evidence mode: raw_transcript" in raw_data["text"];
+
+    structured_result = root spawn PackRun(run_id="invalid_patch", batch_id="sample-starter", mode="structured");
+    structured_data = structured_result.reports[0];
+    assert structured_data["status"] == "pack_ready";
+    assert structured_data["mode"] == "structured";
+    assert structured_data["prompt_mode"] == "traceforge_retrieval_prompt";
+    assert "Evidence mode: traceforge_retrieval" in structured_data["text"];
+}
+
+test {
+    result = root spawn ExportBlindedEvaluation(batch_id="sample-starter", limit=2, provider="openai");
     data = result.reports[0];
     assert data["status"] == "exported";
     assert data["selected_run_count"] == 2;
-    assert "exports/evals/sample-starter_blind.md" in data["blind_sheet_path"];
-    assert "exports/evals/sample-starter_blind_key.json" in data["blind_key_path"];
-    assert "exports/evals/sample-starter_comparison.json" in data["summary_json_path"];
+    assert "exports/evals/sample-starter" in data["blind_sheet_path"];
+    assert "_blind.md" in data["blind_sheet_path"];
+    assert "exports/evals/sample-starter" in data["blind_key_path"];
+    assert "_blind_key.json" in data["blind_key_path"];
+    assert "exports/evals/sample-starter" in data["summary_json_path"];
+    assert "_comparison.json" in data["summary_json_path"];
     blind_sheet = Path(data["blind_sheet_path"]).read_text(encoding="utf-8");
     assert "## Run `invalid_patch`" in blind_sheet or "## Run `premature_completion`" in blind_sheet;
     assert "### Arm A" in blind_sheet;

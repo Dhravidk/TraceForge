@@ -209,28 +209,30 @@ def provider_resolution_summary(provider: str = "auto", model: str = "") -> dict
     config = _load_provider_config()
     preferred_saved = _normalize_provider_name(str(config.get("preferred_provider") or "auto"))
     candidates: list[str] = []
-    if preferred_saved in {"openai", "anthropic"}:
+    if preferred_saved in {"openai", "anthropic", "codex"}:
         candidates.append(preferred_saved)
-    for candidate in ("openai", "anthropic"):
+    elif preferred_saved == "auto":
+        candidates.append("codex")
+    for candidate in ("codex", "openai", "anthropic"):
         if candidate not in candidates:
             candidates.append(candidate)
 
     for candidate in candidates:
+        if candidate == "codex":
+            codex = _codex_status()
+            if codex["available"] and codex["logged_in"]:
+                return {
+                    "provider": "codex",
+                    "model": configured_provider_model("codex", model),
+                    "available": True,
+                    "source": "auto",
+                }
+            continue
         resolved_model = configured_provider_model(candidate, model)
         if configured_provider_key(candidate) and resolved_model:
             return {
                 "provider": candidate,
                 "model": resolved_model,
-                "available": True,
-                "source": "auto",
-            }
-
-    if preferred_saved == "codex":
-        codex = _codex_status()
-        if codex["available"] and codex["logged_in"]:
-            return {
-                "provider": "codex",
-                "model": configured_provider_model("codex", model),
                 "available": True,
                 "source": "auto",
             }

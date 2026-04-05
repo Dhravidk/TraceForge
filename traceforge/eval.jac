@@ -71,6 +71,23 @@ def _coerce_int(value: any, fallback: int = 0) -> int {
     return int(value);
 }
 
+def _coerce_bool(value: any, fallback: bool = False) -> bool {
+    if value is None or value == "" {
+        return fallback;
+    }
+    if isinstance(value, bool) {
+        return bool(value);
+    }
+    lowered = str(value).lower();
+    if lowered in {"true", "1", "yes", "y", "on"} {
+        return True;
+    }
+    if lowered in {"false", "0", "no", "n", "off"} {
+        return False;
+    }
+    return fallback;
+}
+
 def _slugify_label(text: str) -> str {
     cleaned = str(text or "").lower();
     output = "";
@@ -1416,6 +1433,58 @@ def compare_run_harness_summary(
     return _compare_from_run_view(run_id, target_batch_id, run_view, parsed_run, provider, model);
 }
 
+def pack_run_summary(
+    root_node: any,
+    run_id: str,
+    batch_id: str = "",
+    mode: str = "structured",
+) -> dict[str, any] {
+    run_view = run_view_summary(root_node, run_id, batch_id);
+    if run_view["status"] == "stub" {
+        return {
+            "run_id": run_id,
+            "status": "missing",
+            "message": "Run was not found.",
+        };
+    }
+
+    target_batch_id = batch_id;
+    if not target_batch_id and len(run_view["artifacts"]["cluster_ids"]) > 0 {
+        target_batch_id = str(run_view["artifacts"]["cluster_ids"][0]).split(":")[0];
+    }
+
+    parsed_run = parse_run(run_view["source_path"], run_id);
+    requested_mode = str(mode or "structured").lower();
+    pack_text = "";
+    pack_mode = "structured";
+    prompt_mode = "traceforge_retrieval_prompt";
+    if requested_mode == "raw" {
+        pack_text = _raw_baseline_pack(parsed_run, run_view);
+        pack_mode = "raw";
+        prompt_mode = "raw_transcript_prompt";
+    } else {
+        pack_text = _structured_retrieval_pack(parsed_run, run_view);
+    }
+
+    return {
+        "run_id": run_id,
+        "batch_id": target_batch_id,
+        "mode": pack_mode,
+        "prompt_mode": prompt_mode,
+        "text": pack_text,
+        "token_estimate": _pack_token_estimate(pack_text),
+        "task_title": str(run_view.get("task_title") or ""),
+        "summary": str(run_view.get("summary") or ""),
+        "primary_failure": str(run_view.get("primary_failure") or "UNKNOWN"),
+        "critical_step_idx": int(run_view.get("critical_step_idx") or -1),
+        "cluster_ids": list(run_view["artifacts"].get("cluster_ids", [])),
+        "top_files": list(run_view["artifacts"]["fingerprint"].get("top_files", [])),
+        "top_errors": list(run_view["artifacts"]["fingerprint"].get("top_error_keywords", [])),
+        "top_tests": list(run_view["artifacts"]["fingerprint"].get("top_test_names", [])),
+        "status": "pack_ready",
+    };
+}
+
 def export_blinded_eval_summary(
     root_node: any,
     batch_id: str,
@@ -1425,6 +1494,8 @@ def export_blinded_eval_summary(
     model: str = "",
     run_ids: list[str] = [],
 ) -> dict[str, any] {
+    limit = _coerce_int(limit, 10);
+    substantive_only = _coerce_bool(substantive_only, True);
     overview = batch_overview_summary(root_node, batch_id);
     if overview["status"] == "missing" {
         return {

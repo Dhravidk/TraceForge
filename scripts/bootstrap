@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+VENV_PATH="${ROOT}/.venv"
+
+python3 -m venv "${VENV_PATH}"
+source "${VENV_PATH}/bin/activate"
+
+python -m pip install --upgrade pip
+python -m pip install "jaclang==0.13.5"
+python -m pip install -e "${ROOT}"
+
+echo "TraceForge bootstrap complete."
+echo "Activate with: source .venv/bin/activate"
+echo "Then run: traceforge doctor"

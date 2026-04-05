@@ -17,6 +17,7 @@ import from traceforge.graph_build { invalidate_batch_graph }
 import from traceforge.eval {
     compare_run_harness_summary,
     export_blinded_eval_summary,
+    pack_run_summary,
     run_rigorous_eval_summary,
 }
 import from traceforge.llm_ops {
@@ -141,6 +142,16 @@ walker:pub GetRunView {
 
     can run with Root entry {
         report run_view_summary(root, self.run_id, self.batch_id);
+    }
+}
+
+walker:pub PackRun {
+    has run_id: str;
+    has batch_id: str = "";
+    has mode: str = "structured";
+
+    can run with Root entry {
+        report pack_run_summary(root, self.run_id, self.batch_id, self.mode);
     }
 }
 

@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "traceforge"
+version = "0.1.0"
+description = "CLI-first graph-backed trajectory analysis for Codex CLI and Claude Code workflows"
+requires-python = ">=3.11"
+dependencies = [
+  "jaclang==0.13.5",
+]
+
+[project.scripts]
+traceforge = "traceforge.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["traceforge*"]
