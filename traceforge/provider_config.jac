@@ -293,6 +293,12 @@ def provider_status_summary() -> dict[str, any] {
         "resolved_provider": str(resolved.get("provider") or ""),
         "resolved_model": str(resolved.get("model") or ""),
         "resolved_available": bool(resolved.get("available")),
+        "llm_synthesis_available": bool(resolved.get("available")),
+        "llm_synthesis_status": (
+            "provider_ready"
+            if bool(resolved.get("available"))
+            else "unavailable"
+        ),
         "providers": {
             "openai": {
                 "label": "OpenAI",

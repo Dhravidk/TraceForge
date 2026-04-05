@@ -1,4 +1,5 @@
 import from datetime { datetime }
+import from hashlib { sha256 }
 import from pathlib { Path }
 import from traceforge.schema {
     Batch,
@@ -47,9 +48,25 @@ import from traceforge.clustering { build_clusters, failure_class_label }
 import from traceforge.critical { localize_critical_step }
 
 glob GENERATED_PATCH_REGISTRY: dict[str, list[str]] = {};
+glob GRAPH_SCHEMA_VERSION: str = "2026-04-05-global-clustering-v1";
 
 def current_timestamp() -> str {
     return datetime.utcnow().isoformat();
+}
+
+def _graph_identity_for_batch(batch_id: str) -> str {
+    identity_parts: list[str] = [GRAPH_SCHEMA_VERSION, batch_id];
+    for path in batch_files(batch_id) {
+        stamp = path;
+        try {
+            stat_result = Path(path).stat();
+            stamp = path + "|" + str(stat_result.st_size) + "|" + str(stat_result.st_mtime_ns);
+        } except Exception {
+            stamp = path + "|missing";
+        }
+        identity_parts.append(stamp);
+    }
+    return sha256("\n".join(identity_parts).encode("utf-8")).hexdigest();
 }
 
 def remembered_cluster_patch_ids(cluster_id: str) -> list[str] {
@@ -547,7 +564,7 @@ def hydrate_run_graph(run_node: Run) -> bool {
     return True;
 }
 
-def _create_run_node(batch: Batch, parsed_run: ParsedRun, order: int) -> dict[str, any] {
+def _create_run_node(batch: Batch, parsed_run: ParsedRun, order: int, graph_identity: str) -> dict[str, any] {
     fingerprint = fingerprint_to_dict(compute_run_fingerprint(parsed_run));
     primary_failure = dominant_failure_label(fingerprint);
     critical = localize_critical_step(parsed_run, fingerprint);
@@ -555,6 +572,8 @@ def _create_run_node(batch: Batch, parsed_run: ParsedRun, order: int) -> dict[st
     metadata = dict(parsed_run.metadata);
     metadata["traceforge_detail_hydrated"] = False;
     metadata["batch_id"] = batch.batch_id;
+    metadata["traceforge_graph_identity"] = graph_identity;
+    metadata["traceforge_graph_schema_version"] = GRAPH_SCHEMA_VERSION;
 
     batch +>: HasRun(order=order) :+> (run_node := Run(
         run_id=parsed_run.run_id,
@@ -587,8 +606,20 @@ def _create_run_node(batch: Batch, parsed_run: ParsedRun, order: int) -> dict[st
 }
 
 def _batch_graph_is_current(batch: Batch) -> bool {
-    for run_node in list_batch_runs(batch) {
+    current_identity = _graph_identity_for_batch(batch.batch_id);
+    run_nodes = list_batch_runs(batch);
+    if len(run_nodes) != len(batch_files(batch.batch_id)) {
+        return False;
+    }
+    for run_node in run_nodes {
         if run_batch_id_value(run_node) != batch.batch_id {
+            return False;
+        }
+        metadata = dict(run_node.metadata);
+        if str(metadata.get("traceforge_graph_schema_version") or "") != GRAPH_SCHEMA_VERSION {
+            return False;
+        }
+        if str(metadata.get("traceforge_graph_identity") or "") != current_identity {
             return False;
         }
     }
@@ -760,10 +791,11 @@ def ensure_batch_graph(root_node: any, target_batch_id: str, force_rebuild: bool
         run_count=int(batch_meta["run_count"]),
     ));
 
+    graph_identity = _graph_identity_for_batch(target_batch_id);
     run_records: list[dict[str, any]] = [];
     for (order, path) in enumerate(batch_files(target_batch_id)) {
         parsed_run = parse_run(path);
-        run_records.append(_create_run_node(batch, parsed_run, order));
+        run_records.append(_create_run_node(batch, parsed_run, order, graph_identity));
     }
     _attach_clusters(batch, run_records, target_batch_id);
     commit();

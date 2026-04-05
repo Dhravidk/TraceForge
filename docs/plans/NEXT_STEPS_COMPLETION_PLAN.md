@@ -122,6 +122,310 @@ We need one primary demo path and one fallback path.
 
 If multiple agents work at the same time, they can still collide on shared files, docs, and public command surfaces unless we define ownership and merge rules tightly.
 
+## Review-Driven Corrections
+
+The latest external review is directionally correct on one central point:
+
+> TraceForge has a credible shell around a still-underpowered core.
+
+That means the next phase cannot be more CLI polish, more UI polish, or more submission copy.
+The next phase has to strengthen the irreducible product insight:
+
+- honest batch motif discovery
+- stronger evidence-grounded memory synthesis
+- consistent provider behavior
+- inspectable real-data proof
+
+The active product plan is therefore updated with these rules:
+
+1. No major new UI work until the core analysis is stronger.
+2. No new docs-only work unless it removes ambiguity or reflects new shipped capability.
+3. Any new marketing claim must be backed by a checked-in artifact, a runtime test, or an inspectable evaluation bundle.
+4. Core algorithm work now outranks shell polish.
+
+## Immediate Priority Reset
+
+The next shipping milestone is not "nicer CLI."
+
+It is:
+
+> TraceForge can ingest a real batch, discover repeated motifs honestly, produce cluster-derived memory guidance, and show inspectable proof that the structured pack improves downstream analysis.
+
+That milestone breaks down into six hard requirements:
+
+1. Clustering must become global-first, not family-first.
+2. The similarity function must be cleaned up and made defensible.
+3. Memory patches must become cluster-derived before templated rendering.
+4. LLM-backed diagnosis and patch flows must support the same provider matrix as compare.
+5. The repo must ship one small but inspectable real evaluation bundle.
+6. The stale graph / graph reuse edge cases must be resolved so real-batch runs are trustworthy.
+
+## Non-Negotiable Product Truths
+
+These points should govern every implementation decision:
+
+- TraceForge is strongest when it acts as a postmortem compiler for coding-agent trajectories.
+- The key differentiator is still "same failed run, same outer model, better evidence pack."
+- If the structured pack is not materially better than raw transcript analysis, the product story collapses.
+- If clustering is not honest, the batch-analysis story collapses.
+- If memory patches are obviously templated, the long-term learning story collapses.
+
+## Execution Order
+
+The work should now happen in this order:
+
+1. Fix correctness and trust issues in the core analysis path.
+2. Ship inspectable evidence that the core path works on real data.
+3. Unify provider behavior across compare, diagnosis, and patch flows.
+4. Then polish CLI UX and docs where needed.
+5. Only after that, touch the UI again.
+
+## Workstream 0: Graph Correctness And Rebuild Trust
+
+### Objective
+
+Eliminate ambiguity about whether TraceForge is reading current parsed data or stale graph state.
+
+### Why this exists
+
+We already saw evidence that real external batches can report misleading reused graph state.
+If batch invalidation and rebuild are not trustworthy, every higher-level claim becomes suspect.
+
+### Deliverables
+
+- explicit graph versioning tied to parser/fingerprint schema
+- forced rebuild when parser version or batch file set changes
+- clear CLI reporting of `graph_reused` versus `graph_rebuilt`
+- batch summary checks that surface stale graph mismatch
+
+### Required implementation changes
+
+- add a graph schema/version stamp to batch metadata
+- hash the batch file manifest and parser version into graph identity
+- make `ensure_batch_graph` rebuild when stored graph identity no longer matches current input identity
+- make `doctor` or `overview` expose graph freshness state for the current batch
+
+### Done when
+
+- a real uploaded batch cannot silently keep an outdated analysis graph
+- operators can tell whether the graph was rebuilt from current parser logic
+
+## Workstream 1: Honest Global Clustering
+
+### Objective
+
+Replace family-first clustering with global motif discovery followed by labeling.
+
+### Why this exists
+
+Today the clustering claim is weaker than the pitch because runs are grouped by `primary_failure` before clustering.
+That yields subclusters within a pre-labeled family instead of honest motif discovery across the batch.
+
+### Deliverables
+
+- global similarity graph across all failed runs
+- connected components or alternative cluster assignment over the full batch
+- post-cluster labeling based on the cluster aggregate, not pre-bucketed family
+- revised starter/demo data that actually shows repeated motifs
+
+### Required implementation changes
+
+- remove the initial `by_family` bucketing step from [clustering.jac](/home/gb10/Projects/JacHacks/traceforge/clustering.jac)
+- build similarity neighbors across the entire run set
+- compute cluster-level failure labels from aggregate signals after clusters exist
+- update cluster summaries to say when a cluster is mixed or weakly labeled
+- replace the "4 runs -> 4 clusters" expectation in the smoke/demo story with a motif-producing sample
+
+### Acceptance criteria
+
+- the system can discover repeated motifs even when the runs do not share the same initial dominant family
+- cluster labels can differ from individual-run dominant family labels when the cluster evidence supports it
+
+## Workstream 2: Similarity Function Repair
+
+### Objective
+
+Make the run similarity score technically defensible.
+
+### Why this exists
+
+The current similarity function double-counts lexical overlap, which makes the core analysis look undercooked.
+
+### Deliverables
+
+- repaired weight distribution in `similarity_score`
+- one additional distinct feature to replace the duplicated lexical term
+- documented rationale for every weighted feature
+
+### Candidate replacement features
+
+- critical-step alignment overlap
+- exit-status compatibility
+- patch/test temporal ordering similarity
+- hypothesis-score overlap
+
+### Required implementation changes
+
+- remove duplicated lexical weighting
+- add one new feature with a clear interpretation
+- document the feature mix in code comments and operator docs
+- add targeted tests that compare at least a few synthetic fingerprints with expected relative ordering
+
+### Done when
+
+- the similarity score reads like an intentional design instead of an accidental blend
+
+## Workstream 3: Cluster-Derived Memory Synthesis
+
+### Objective
+
+Make memory patches emerge from cluster evidence instead of starting from canned failure-family templates.
+
+### Why this exists
+
+This is currently the weakest part of the product moat.
+If the patch is visibly "template plus seasoning," then the trajectory-to-memory compiler story does not hold.
+
+### Deliverables
+
+- cluster-level evidence extraction for repeated conditions, repeated bad actions, and repeated failed validations
+- rule synthesis from those evidence records
+- templated phrasing only as a final rendering layer, not as the logical source of the rule
+
+### Required synthesis pipeline
+
+1. derive repeated cluster conditions
+2. derive repeated failure-triggering actions
+3. derive repeated missing validation steps
+4. derive concrete guardrails
+5. render those guardrails into AGENTS.md-compatible text
+
+### Required implementation changes
+
+- move from failure-class-first rule generation to evidence-record-first rule generation in [llm_ops.jac](/home/gb10/Projects/JacHacks/traceforge/llm_ops.jac)
+- preserve supporting steps and supporting runs for every generated rule
+- mark each memory rule with provenance:
+  - derived from cluster evidence
+  - derived from weak evidence
+  - fallback template
+
+### Acceptance criteria
+
+- a reviewer can look at a generated rule and trace it back to repeated evidence across multiple runs
+- fallback templated rules remain available, but are clearly marked as fallback
+
+## Workstream 4: Provider Unification
+
+### Objective
+
+Make compare, diagnosis, cluster analysis, and memory synthesis use one consistent provider model.
+
+### Why this exists
+
+The current product behavior is split-brain:
+
+- compare is provider-aware
+- diagnosis and patch logic are effectively gated by OpenAI availability
+
+That is a confusing user experience and weakens the Codex/Claude workflow story.
+
+### Deliverables
+
+- one provider resolution path shared by compare, run diagnosis, cluster diagnosis, and patch synthesis
+- one CLI-visible provider mode for the entire session
+- one clear fallback story when no live provider is available
+
+### Required implementation changes
+
+- remove OpenAI-only gating from [llm_ops.jac](/home/gb10/Projects/JacHacks/traceforge/llm_ops.jac)
+- route all LLM-backed synthesis through the shared provider config layer
+- expose the resolved provider in all LLM-backed command outputs
+- add strict-mode behavior where relevant beyond compare
+
+### Done when
+
+- a user can choose Codex, OpenAI, or Anthropic once and get consistent behavior across all LLM-backed flows
+
+## Workstream 5: Inspectable Real-Data Proof
+
+### Objective
+
+Ship a small but checkable evidence bundle in the repo.
+
+### Why this exists
+
+The repo currently describes real-data validation but does not ship inspectable proof artifacts.
+That keeps the product in "narrative evidence" territory.
+
+### Deliverables
+
+- one small checked-in real or redacted batch slice
+- one matching gold annotation file
+- one saved raw pack
+- one saved structured pack
+- one saved compare artifact
+- one saved report artifact
+- one short note explaining what the artifact proves and what it does not prove
+
+### Scope target
+
+- 10 to 20 runs is enough
+- repeated motifs must actually exist
+- at least one case should show provider-backed comparison if credentials and safety allow
+
+### Constraints
+
+- no secrets
+- no giant binary dumps
+- no unreviewed benchmark claims
+
+### Done when
+
+- a reviewer can inspect the repo alone and see a concrete real-data example of the product thesis
+
+## Workstream 6: Starter Data Replacement
+
+### Objective
+
+Replace the current smoke fixture as the main demo proof with a slightly richer, motif-bearing starter slice.
+
+### Why this exists
+
+The current starter sample is useful for smoke testing and weak for persuasion.
+
+### Deliverables
+
+- keep the current tiny fixture for fast tests
+- add a second checked-in demo batch whose main purpose is motif discovery
+- update demo docs to use the richer sample while preserving the tiny sample for smoke tests
+
+### Done when
+
+- the canonical demo naturally shows repeated failure patterns rather than one cluster per run
+
+## Workstream 7: Repo Trust Signals
+
+### Objective
+
+Bring the repo up to the minimum standard expected of a credible open-source tool.
+
+### Deliverables
+
+- `LICENSE`
+- basic CI workflow for smoke checks
+- reduced README overclaiming
+- a cleaner separation between operator docs and submission docs
+
+### Required rules
+
+- README claims must map to code or checked-in artifacts
+- submission docs should not substitute for proof artifacts
+- internal planning docs should not be mistaken for operator documentation
+
+### Done when
+
+- the repo feels like a real tool repository, not a judging packet
+
 ## Product Contract
 
 By demo time, the product should behave like this:
@@ -514,8 +818,8 @@ Owns:
 
 - `README.md`
 - `main.jac`
-- public CLI entrypoint wiring
 - public command naming
+- cross-workstream architecture decisions
 - final merge decisions
 - final demo path
 
@@ -526,49 +830,93 @@ Responsibilities:
 - merge worker output
 - guard the public CLI contract
 
-### Worker A: CLI Wrapper And Output
+### Worker A: Parser And Graph Correctness
 
 Owns:
 
-- new CLI wrapper files
-- output renderer
-- CLI help text
-- JSON schema docs draft
+- [parser.jac](/home/gb10/Projects/JacHacks/traceforge/parser.jac)
+- [graph_build.jac](/home/gb10/Projects/JacHacks/traceforge/graph_build.jac)
+- parser fixtures
+- graph freshness tests
 
-### Worker B: Pack Surface
+Responsibilities:
 
-Owns:
+- improve parser fidelity
+- fix stale graph and rebuild trust
+- keep parsed metadata and graph state aligned
 
-- pack builders
-- run/cluster human-readable renderers
-- structured-pack and raw-pack formatting
-
-### Worker C: Provider And Auth
+### Worker B: Clustering And Similarity
 
 Owns:
 
-- provider config behavior
-- `doctor`
-- auth commands
-- strict-provider enforcement
+- [clustering.jac](/home/gb10/Projects/JacHacks/traceforge/clustering.jac)
+- clustering-related slices of [features.jac](/home/gb10/Projects/JacHacks/traceforge/features.jac)
+- motif-bearing demo/eval sample design
 
-### Worker D: Docs And Demo
+Responsibilities:
 
-Owns:
+- replace family-first clustering
+- repair similarity scoring
+- move cluster labeling to post-cluster analysis
 
-- CLI quickstart docs
-- provider setup docs
-- demo playbook
-- submission docs rewrites
-
-### Worker E: Export And Artifact Polish
+### Worker C: Memory Synthesis And Pack Quality
 
 Owns:
 
-- export-report UX
-- export-eval UX
-- output file naming polish
-- fallback artifact packaging
+- [llm_ops.jac](/home/gb10/Projects/JacHacks/traceforge/llm_ops.jac)
+- pack-related slices of [eval.jac](/home/gb10/Projects/JacHacks/traceforge/eval.jac)
+- pack-facing slices of [analysis.jac](/home/gb10/Projects/JacHacks/traceforge/analysis.jac)
+
+Responsibilities:
+
+- make memory patches cluster-derived
+- preserve rule provenance and supporting evidence
+- improve what the downstream model actually sees
+
+### Worker D: Provider And Auth
+
+Owns:
+
+- [provider_config.jac](/home/gb10/Projects/JacHacks/traceforge/provider_config.jac)
+- provider-related slices of [api.jac](/home/gb10/Projects/JacHacks/traceforge/api.jac)
+- provider-related slices of [eval.jac](/home/gb10/Projects/JacHacks/traceforge/eval.jac)
+
+Responsibilities:
+
+- unify provider behavior across compare, diagnosis, and patch flows
+- keep strict-provider behavior honest
+- keep fallback semantics explicit
+
+### Worker E: Real-Data Evidence And Repo Trust
+
+Owns:
+
+- checked-in artifact bundles
+- gold annotations
+- validation notes
+- `LICENSE`
+- CI scaffolding
+
+Responsibilities:
+
+- convert narrative proof into inspectable proof
+- keep repo claims tied to shipped artifacts
+
+### Worker F: CLI And Docs Integrator
+
+Owns:
+
+- [cli.jac](/home/gb10/Projects/JacHacks/traceforge/cli.jac)
+- [api.jac](/home/gb10/Projects/JacHacks/traceforge/api.jac)
+- `docs/cli/*.md`
+- submission docs
+- [reporting.jac](/home/gb10/Projects/JacHacks/traceforge/reporting.jac)
+
+Responsibilities:
+
+- keep the public product surface coherent
+- reflect only shipped behavior in docs
+- keep demo scripts aligned with the strongest proven workflow
 
 ## File Ownership Matrix
 
@@ -579,38 +927,49 @@ The following ownership should be observed during implementation.
 - `README.md`
 - `main.jac`
 - packaging entrypoint config
-- any repo-root bootstrap file
+- repo-root bootstrap files
+- final approval on any shared public interface changes
 
 ### Worker A-owned files
 
-- new `traceforge/cli.jac`
-- thin `traceforge/cli.py` packaging shim
-- new `scripts/traceforge`
-- new CLI formatting helpers
+- [parser.jac](/home/gb10/Projects/JacHacks/traceforge/parser.jac)
+- [graph_build.jac](/home/gb10/Projects/JacHacks/traceforge/graph_build.jac)
+- parser-oriented test fixtures
 
 ### Worker B-owned files
 
-- [analysis.jac](/home/gb10/Projects/JacHacks/traceforge/analysis.jac)
-- [eval.jac](/home/gb10/Projects/JacHacks/traceforge/eval.jac)
-- new pack renderer helpers
+- [clustering.jac](/home/gb10/Projects/JacHacks/traceforge/clustering.jac)
+- clustering-related slices of [features.jac](/home/gb10/Projects/JacHacks/traceforge/features.jac)
+- motif-bearing sample definitions and manifests
 
 ### Worker C-owned files
 
-- [provider_config.jac](/home/gb10/Projects/JacHacks/traceforge/provider_config.jac)
-- [api.jac](/home/gb10/Projects/JacHacks/traceforge/api.jac)
-- provider-related slices of [eval.jac](/home/gb10/Projects/JacHacks/traceforge/eval.jac)
+- [llm_ops.jac](/home/gb10/Projects/JacHacks/traceforge/llm_ops.jac)
+- pack-related slices of [eval.jac](/home/gb10/Projects/JacHacks/traceforge/eval.jac)
+- pack-facing slices of [analysis.jac](/home/gb10/Projects/JacHacks/traceforge/analysis.jac)
 
 ### Worker D-owned files
 
+- [provider_config.jac](/home/gb10/Projects/JacHacks/traceforge/provider_config.jac)
+- provider-related slices of [api.jac](/home/gb10/Projects/JacHacks/traceforge/api.jac)
+- provider-related slices of [eval.jac](/home/gb10/Projects/JacHacks/traceforge/eval.jac)
+
+### Worker E-owned files
+
+- checked-in artifact bundles under a dedicated artifact subtree
+- [validation_notes.md](/home/gb10/Projects/JacHacks/docs/cli/validation_notes.md)
+- `LICENSE`
+- `.github/workflows/*`
+
+### Worker F-owned files
+
+- [cli.jac](/home/gb10/Projects/JacHacks/traceforge/cli.jac)
+- [api.jac](/home/gb10/Projects/JacHacks/traceforge/api.jac)
 - `docs/cli/*.md`
 - [demo_script.md](/home/gb10/Projects/JacHacks/docs/submission/demo_script.md)
 - [devpost_outline.md](/home/gb10/Projects/JacHacks/docs/submission/devpost_outline.md)
 - [judging_notes.md](/home/gb10/Projects/JacHacks/docs/submission/judging_notes.md)
-
-### Worker E-owned files
-
 - [reporting.jac](/home/gb10/Projects/JacHacks/traceforge/reporting.jac)
-- export-related slices of [eval.jac](/home/gb10/Projects/JacHacks/traceforge/eval.jac)
 
 ## Shared-File Rules
 
@@ -620,13 +979,15 @@ These files are shared-risk files and should not be edited casually by multiple 
 - `README.md`
 - `traceforge/api.jac`
 - `traceforge/eval.jac`
+- `traceforge/analysis.jac`
+- `traceforge/graph_build.jac`
 
 Rules:
 
 1. Only the integrator edits `main.jac` and `README.md`.
-2. `api.jac` changes must be queued and merged by the integrator unless one worker is explicitly assigned sole ownership for a time window.
-3. `eval.jac` must be split by responsibility before parallel work starts. If that is not practical, only one worker edits it per cycle.
-4. If two workstreams need `eval.jac`, one of them must first extract helper functions into new files so ownership becomes clean.
+2. `api.jac`, `eval.jac`, `analysis.jac`, and `graph_build.jac` changes must be time-boxed to one worker when touched directly.
+3. If two workstreams need `eval.jac` or `analysis.jac`, one of them must first extract helper functions into a new owned module before parallel work continues.
+4. No docs worker updates command semantics before the integrator confirms the CLI shape is stable for that cycle.
 
 ## Branch And Worktree Strategy
 
@@ -634,12 +995,13 @@ Each parallel agent should work in its own branch or worktree.
 
 Recommended branch names:
 
-- `thread/integrator-cli-shape`
-- `thread/cli-wrapper`
-- `thread/pack-surface`
-- `thread/provider-hardening`
-- `thread/docs-demo`
-- `thread/export-polish`
+- `thread/integrator-architecture`
+- `thread/parser-graph`
+- `thread/global-clustering`
+- `thread/memory-synthesis`
+- `thread/provider-unification`
+- `thread/evidence-bundle`
+- `thread/cli-docs`
 
 Recommended rule:
 
@@ -693,87 +1055,87 @@ To prevent overwrite damage:
 
 ## Phase Plan
 
-## Phase 1: Product Surface Lock
+## Phase 1: Core Correctness Lock
 
 ### Goal
 
-Freeze the CLI shape before broad implementation.
+Eliminate the trust-destroying correctness issues first.
 
 ### Tasks
 
-- finalize command list
-- finalize flag naming
-- finalize JSON-mode contract
-- finalize strict-provider behavior
+- graph freshness and rebuild correctness
+- parser fidelity gaps
+- similarity-function repair
+- global clustering design lock
 
 ### Must happen before
 
-- major docs rewrite
-- help text polish
-- demo script finalization
+- provider unification
+- docs rewrites that make stronger claims
+- any new demo polish
 
-## Phase 2: Wrapper And Pack MVP
+## Phase 2: Real Core Differentiation
 
 ### Goal
 
-Ship the first usable public CLI for the core demo path.
+Make the core insight materially stronger than a trace browser.
 
 ### Tasks
 
-- add wrapper
-- expose `doctor`
-- expose `run`
-- expose `pack`
-- expose `compare`
-- normalize output
+- cluster-derived memory synthesis
+- stronger pack content
+- post-cluster labeling
+- evidence provenance across rules and summaries
 
 ### Outcome
 
-The CLI demo becomes viable even before all exports are polished.
+The product becomes more than shell polish around heuristics.
 
-## Phase 3: Provider Hardening
+## Phase 3: Provider Unification
 
 ### Goal
 
-Make live compare trustworthy and optional.
+Make all LLM-backed features follow one provider model.
 
 ### Tasks
 
-- strict mode
-- better errors
-- auth commands
-- doctor details
+- unify compare, diagnosis, and patch synthesis provider resolution
+- strict mode beyond compare where relevant
+- clear live-versus-fallback semantics
 
 ### Outcome
 
-Live provider-backed compare becomes safe to use in a demo.
+The Codex/Claude/OpenAI story becomes coherent.
 
-## Phase 4: Docs Rewrite
+## Phase 4: Inspectable Proof
 
 ### Goal
 
-Make the repo self-explanatory from the GitHub URL alone.
+Ship a small but checkable real-data bundle.
 
 ### Tasks
 
-- rewrite README
-- add CLI docs
-- update submission docs
+- check in real or redacted batch slice
+- add gold labels
+- add saved pack, compare, and report artifacts
+- tie claims in docs to these artifacts
 
 ### Outcome
 
-A coding agent can install and run TraceForge from the docs alone.
+Reviewers can inspect proof without trusting narrative claims.
 
-## Phase 5: Export And Demo Backup
+## Phase 5: Product Surface And Demo Lock
 
 ### Goal
 
-Make the product resilient under demo conditions.
+Polish the CLI and docs around the now-stronger core.
 
 ### Tasks
 
-- polish report export
-- polish eval export
+- finalize command surface
+- tighten human-readable output
+- finalize demo script and fallback path
+- simplify docs around the proven workflow
 - prepare fallback artifacts
 - finish terminal demo playbook
 

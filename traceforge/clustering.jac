@@ -1,6 +1,5 @@
 import from traceforge.features {
     cosine_like_overlap,
-    dominant_failure_label,
     summarize_counts,
     top_k_indices
 }
@@ -26,6 +25,29 @@ def _sequence_similarity(left: list[str], right: list[str]) -> float {
     return cosine_like_overlap(left, right);
 }
 
+def _milestone_similarity(left: dict[str, any], right: dict[str, any]) -> float {
+    keys = ["first_patch_step", "first_test_step", "first_error_step", "first_submit_step"];
+    total = 0.0;
+    count = 0;
+    scale = max(float(left.get("num_steps", 0)), float(right.get("num_steps", 0)), 1.0);
+    for key in keys {
+        left_value = int(left.get(key, -1));
+        right_value = int(right.get(key, -1));
+        if left_value < 0 and right_value < 0 {
+            total += 1.0;
+        } elif left_value < 0 or right_value < 0 {
+            total += 0.0;
+        } else {
+            total += 1.0 - min(1.0, abs(float(left_value) - float(right_value)) / scale);
+        }
+        count += 1;
+    }
+    if count <= 0 {
+        return 0.0;
+    }
+    return round(total / count, 4);
+}
+
 def similarity_score(left: dict[str, any], right: dict[str, any]) -> float {
     left_scores = left.get("failure_class_scores", {});
     right_scores = right.get("failure_class_scores", {});
@@ -44,6 +66,7 @@ def similarity_score(left: dict[str, any], right: dict[str, any]) -> float {
         left.get("top_files", []) + left.get("top_test_names", []) + left.get("top_error_keywords", []),
         right.get("top_files", []) + right.get("top_test_names", []) + right.get("top_error_keywords", []),
     );
+    milestone_similarity = _milestone_similarity(left, right);
     numeric_distance = (
         abs(float(left.get("num_steps", 0)) - float(right.get("num_steps", 0)))
         + abs(float(left.get("num_tests", 0)) - float(right.get("num_tests", 0)))
@@ -56,9 +79,9 @@ def similarity_score(left: dict[str, any], right: dict[str, any]) -> float {
     return round(
         (0.35 * failure_overlap)
         + (0.20 * sequence_similarity)
-        + (0.20 * lexical_overlap)
+        + (0.15 * lexical_overlap)
         + (0.15 * numeric_similarity)
-        + (0.10 * lexical_overlap),
+        + (0.15 * milestone_similarity),
         4,
     );
 }
@@ -153,7 +176,7 @@ def _medoid_run_id(component_records: list[dict[str, any]]) -> str {
 def _component_similar_pairs(
     component: list[int],
     edges: list[tuple[int, int, float]],
-    family_records: list[dict[str, any]],
+    run_records: list[dict[str, any]],
 ) -> list[dict[str, any]] {
     component_set: set[int] = set(component);
     dedup: dict[str, dict[str, any]] = {};
@@ -163,8 +186,8 @@ def _component_similar_pairs(
         if left_index not in component_set or right_index not in component_set {
             continue;
         }
-        left_run_id = str(family_records[left_index]["run_id"]);
-        right_run_id = str(family_records[right_index]["run_id"]);
+        left_run_id = str(run_records[left_index]["run_id"]);
+        right_run_id = str(run_records[right_index]["run_id"]);
         if left_run_id == right_run_id {
             continue;
         }
@@ -191,56 +214,81 @@ def _component_similar_pairs(
     );
 }
 
-def build_clusters(run_records: list[dict[str, any]], batch_id: str, top_k: int = 3, threshold: float = 0.55) -> list[dict[str, any]] {
-    by_family: dict[str, list[dict[str, any]]] = {};
-    for record in run_records {
-        family = str(record.get("primary_failure") or dominant_failure_label(record["fingerprint"]));
-        if family not in by_family {
-            by_family[family] = [];
+def _aggregate_failure_scores(component_records: list[dict[str, any]]) -> dict[str, float] {
+    totals: dict[str, float] = {};
+    for record in component_records {
+        failure_scores = record["fingerprint"].get("failure_class_scores", {});
+        for label in failure_scores {
+            totals[str(label)] = totals.get(str(label), 0.0) + float(failure_scores[label]);
         }
-        by_family[family].append(record);
+    }
+    return totals;
+}
+
+def _cluster_failure_label(component_records: list[dict[str, any]]) -> str {
+    if len(component_records) == 0 {
+        return "UNKNOWN";
+    }
+    totals = _aggregate_failure_scores(component_records);
+    if len(totals) == 0 {
+        return "UNKNOWN";
+    }
+    ordered = sorted(
+        [(label, float(totals[label]) / max(len(component_records), 1)) for label in totals],
+        key=lambda item: any -> any : (-item[1], item[0]),
+    );
+    best_label = str(ordered[0][0]);
+    best_score = float(ordered[0][1]);
+    second_score = float(ordered[1][1]) if len(ordered) > 1 else 0.0;
+    if best_score < 0.4 or (best_score - second_score) < 0.08 {
+        return "UNKNOWN";
+    }
+    return best_label;
+}
+
+def build_clusters(run_records: list[dict[str, any]], batch_id: str, top_k: int = 3, threshold: float = 0.55) -> list[dict[str, any]] {
+    clusters: list[dict[str, any]] = [];
+    if len(run_records) == 0 {
+        return clusters;
     }
 
-    clusters: list[dict[str, any]] = [];
-    for family in by_family {
-        family_records = by_family[family];
-        fingerprints = [record["fingerprint"] for record in family_records];
-        neighbor_sets: list[list[dict[str, any]]] = [];
-        for index=0 to index<len(fingerprints) by index+=1 {
-            neighbor_sets.append(top_k_neighbors(index, fingerprints, top_k));
+    fingerprints = [record["fingerprint"] for record in run_records];
+    neighbor_sets: list[list[dict[str, any]]] = [];
+    for index=0 to index<len(fingerprints) by index+=1 {
+        neighbor_sets.append(top_k_neighbors(index, fingerprints, top_k));
+    }
+    edges = threshold_edges(neighbor_sets, threshold);
+    components = _connected_components(len(run_records), edges);
+
+    for (component_index, component) in enumerate(components) {
+        component_records = [run_records[index] for index in component];
+        similar_pairs = _component_similar_pairs(component, edges, run_records);
+        component_files: list[str] = [];
+        component_errors: list[str] = [];
+        component_tests: list[str] = [];
+        run_ids: list[str] = [];
+        for record in component_records {
+            run_ids.append(str(record["run_id"]));
+            component_files.extend(record["fingerprint"].get("top_files", []));
+            component_errors.extend(record["fingerprint"].get("top_error_keywords", []));
+            component_tests.extend(record["fingerprint"].get("top_test_names", []));
         }
-        edges = threshold_edges(neighbor_sets, threshold);
-        components = _connected_components(len(family_records), edges);
-        for (component_index, component) in enumerate(components) {
-            component_records = [family_records[index] for index in component];
-            similar_pairs = _component_similar_pairs(component, edges, family_records);
-            component_files: list[str] = [];
-            component_errors: list[str] = [];
-            component_tests: list[str] = [];
-            run_ids: list[str] = [];
-            for record in component_records {
-                run_ids.append(str(record["run_id"]));
-                component_files.extend(record["fingerprint"].get("top_files", []));
-                component_errors.extend(record["fingerprint"].get("top_error_keywords", []));
-                component_tests.extend(record["fingerprint"].get("top_test_names", []));
+        family = _cluster_failure_label(component_records);
+        clusters.append(
+            {
+                "cluster_id": f"{batch_id}:{family.lower()}:{component_index}",
+                "label": failure_class_label(family),
+                "failure_class": family,
+                "size": len(component_records),
+                "medoid_run_id": _medoid_run_id(component_records),
+                "run_ids": run_ids,
+                "similar_pairs": similar_pairs,
+                "recurring_files": summarize_counts(component_files, 5),
+                "recurring_errors": summarize_counts(component_errors, 5),
+                "recurring_tests": summarize_counts(component_tests, 5),
+                "summary": f"{failure_class_label(family)} cluster with {len(component_records)} run(s).",
             }
-            cluster_id = f"{batch_id}:{family.lower()}:{component_index}";
-            clusters.append(
-                {
-                    "cluster_id": cluster_id,
-                    "label": failure_class_label(family),
-                    "failure_class": family,
-                    "size": len(component_records),
-                    "medoid_run_id": _medoid_run_id(component_records),
-                    "run_ids": run_ids,
-                    "similar_pairs": similar_pairs,
-                    "recurring_files": summarize_counts(component_files, 5),
-                    "recurring_errors": summarize_counts(component_errors, 5),
-                    "recurring_tests": summarize_counts(component_tests, 5),
-                    "summary": f"{failure_class_label(family)} cluster with {len(component_records)} run(s).",
-                }
-            );
-        }
+        );
     }
 
     return sorted(clusters, key=lambda cluster: any -> any : (-cluster["size"], cluster["cluster_id"]));
